@@ -23,14 +23,14 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        run: pip install pillow numpy "pywebview[winforms]" pythonnet imageio-ffmpeg pyinstaller
+        run: pip install pillow numpy opencv-python-headless "pywebview[winforms]" pythonnet imageio-ffmpeg pyinstaller
 
       - name: Build exe
-        run: pyinstaller --noconfirm PairCut.spec
+        run: pyinstaller --noconfirm CutKit.spec
 
       - name: Rename artifact
         shell: bash
-        run: mv dist/PairCut.exe PairCut-win-x64.exe
+        run: mv dist/CutKit.exe CutKit-win-x64.exe
 
       - name: Upload to release
         shell: bash
@@ -38,4 +38,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ github.event.release.tag_name || inputs.tag }}"
-          gh release upload "$TAG" PairCut-win-x64.exe --clobber
+          gh release upload "$TAG" CutKit-win-x64.exe --clobber
