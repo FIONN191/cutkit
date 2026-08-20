@@ -367,7 +367,7 @@ PAGE = r"""<!doctype html>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--txt);font:15px/1.5 -apple-system,"PingFang SC",sans-serif;padding:20px 22px 40px}
 h1{font-size:20px;display:flex;align-items:center;gap:10px;margin-bottom:16px}
-h1 .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(105deg,#31313c 48%,#fff 48%,#fff 52%,var(--acc) 52%,var(--acc2));display:inline-block}
+h1 .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(144deg,#2e2e33 61%,#ffd9c0 61%,#ffd9c0 63%,#ff7e2e 63%,#f2641a);display:inline-block}
 h1 small{color:var(--dim);font-weight:400;font-size:13px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
 .card h2{font-size:14px;color:var(--dim);margin-bottom:12px;font-weight:600}
