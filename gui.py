@@ -265,7 +265,10 @@ def worker(pairs, opts):
             pairs, opts["out"],
             caption=opts["caption"], caption_size=opts["caption_size"],
             label_before=opts["label_before"], label_after=opts["label_after"],
-            scene_sec=opts["scene_sec"], reveal=opts["slider"],
+            scene_sec=opts["scene_sec"],
+            align_mode=opts.get("align_mode", "auto"),
+            align_fill=opts.get("align_fill", True),
+            nudges=opts.get("nudges") or {}, reveal=opts["slider"],
             direction=opts["direction"],
             comment_user=opts["comment_user"], comment_text=opts["comment_text"],
             progress_text=opts["progress_text"],
@@ -427,6 +430,12 @@ border-radius:12px;padding:10px;align-items:center}
 .badge{display:inline-block;font-size:10px;padding:1px 7px;border-radius:6px;
 background:#2c2c36;color:var(--dim);margin-right:6px}
 .badge.mv{background:#3a2a12;color:var(--acc2)}
+.alignbox{margin-top:10px;padding:10px;background:#111117;border:1px solid var(--line);
+border-radius:10px;display:none}
+.alignbox.on{display:flex;gap:12px;align-items:flex-start}
+.alignbox img{width:150px;border-radius:8px;background:#000}
+.nudge{display:grid;grid-template-columns:repeat(3,34px);gap:4px}
+.nudge button{padding:4px 0;font-size:12px;border-radius:6px}
 .tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .tabs button{border-radius:10px;padding:9px 18px;white-space:nowrap;flex:0 0 auto}
 .tabs button.on{background:linear-gradient(120deg,var(--acc),var(--acc2));color:#1b0d05;border:none;font-weight:700}
@@ -481,6 +490,13 @@ background:#2c2c36;color:var(--dim);margin-right:6px}
 <div><label>转场</label><select id="transition">
 <option value="spin">旋转模糊</option>
 <option value="none">直切</option></select></div>
+<div style="grid-column:1/4"><label>人物对齐</label>
+<div class="row">
+<label class="row" style="gap:6px;font-size:14px;color:var(--txt)">
+<input type="checkbox" id="alignOn" checked style="width:auto" onchange="alignChanged()"> 自动对齐前后图人物（比例不同/位移缩放都能对上）</label>
+<label class="row" style="gap:6px;font-size:14px;color:var(--txt)">
+<input type="checkbox" id="alignFill" checked style="width:auto" onchange="alignChanged()"> 裁到共同区域（推荐，无边缘拉丝）</label>
+</div></div>
 <div><label>对比展示方式</label><select id="slider" onchange="syncReveal()">
 <option value="sweep">滑杆·来回扫</option>
 <option value="once">滑杆·滑到底</option>
@@ -794,6 +810,8 @@ function renderPairs(){
         <button class="small" onclick="delPair(${i})">✕</button>
       </div>
     </div>`;
+    const ab=document.createElement('div'); ab.className='alignbox'; ab.id='ab'+i;
+    d.appendChild(ab);
     el.appendChild(d);
   });
   $('go').disabled = PAIRS.length===0 || BUSY;
@@ -801,6 +819,54 @@ function renderPairs(){
     `${PAIRS.length} 对素材 · 成片约 ${(PAIRS.length*parseFloat($('scene_sec').value||3.6)).toFixed(1)} 秒` :
     '还没有配对：把 Before / After 各放一张到上面的两个框里。';
   renderThumbs();
+}
+let NUDGE={};
+function alignChanged(){
+  document.querySelectorAll('.alignbox.on').forEach(b=>{
+    const i=parseInt(b.id.slice(2),10); loadAlign(i);});
+}
+function alignPanel(i){
+  const b=$('ab'+i);
+  if(b.classList.contains('on')){b.classList.remove('on');return;}
+  b.classList.add('on'); loadAlign(i);
+}
+function nudgeOf(i){return NUDGE[i]||{scale:1,dx:0,dy:0};}
+async function loadAlign(i){
+  const b=$('ab'+i); if(!b)return;
+  b.innerHTML='<div class="hint" style="margin-top:0">对齐分析中…</div>';
+  const n=nudgeOf(i);
+  const r=await post('/align_preview',{before:PAIRS[i][0],after:PAIRS[i][1],
+    off:!$('alignOn').checked, fill:$('alignFill').checked,
+    nudge:($('alignOn').checked?n:null)});
+  if(r.error){b.innerHTML='<div class="hint" style="margin-top:0">'+esc(r.error)+'</div>';return;}
+  const f=r.info, meth={features:'特征匹配','features+ecc':'特征+ECC',ecc:'ECC 梯度',phase:'相位相关',none:'无需调整',off:'已关闭'}[f.method]||f.method;
+  b.innerHTML=`<img src="/thumb?p=${encodeURIComponent(r.img)}&v=${Date.now()}">
+    <div style="flex:1">
+      <div class="sub" style="font-size:12px;color:var(--dim)">
+        梳齿预览：人物边缘接不上就是还没对齐<br>
+        方式 <b>${esc(meth)}</b> · 缩放 ${(f.scale||1).toFixed(3)} ·
+        位移 ${Math.round(f.dx||0)},${Math.round(f.dy||0)}px
+        ${f.gain?`· 吻合度 +${f.gain.toFixed(3)}`:''}
+      </div>
+      <div class="row" style="margin-top:8px;align-items:flex-start;gap:14px">
+        <div class="nudge">
+          <span></span><button onclick="nud(${i},0,-8)">↑</button><span></span>
+          <button onclick="nud(${i},-8,0)">←</button><button onclick="nud(${i},0,0,1)">⟲</button><button onclick="nud(${i},8,0)">→</button>
+          <span></span><button onclick="nud(${i},0,8)">↓</button><span></span>
+        </div>
+        <div class="nudge" style="grid-template-columns:repeat(2,48px)">
+          <button onclick="nud(${i},0,0,0,0.98)">缩小</button>
+          <button onclick="nud(${i},0,0,0,1.02)">放大</button>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:6px">手动微调：${(nudgeOf(i).dx)||0},${(nudgeOf(i).dy)||0}px · ×${(nudgeOf(i).scale||1).toFixed(2)}</div>
+    </div>`;
+}
+function nud(i,dx,dy,reset,ds){
+  const n=nudgeOf(i);
+  if(reset){NUDGE[i]={scale:1,dx:0,dy:0};}
+  else NUDGE[i]={scale:(n.scale||1)*(ds||1),dx:(n.dx||0)+dx,dy:(n.dy||0)+dy};
+  loadAlign(i);
 }
 function swapPair(i){PAIRS[i]=[PAIRS[i][1],PAIRS[i][0]];renderPairs();}
 function delPair(i){PAIRS.splice(i,1);renderPairs();}
@@ -1323,6 +1389,44 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 STATE["last_ping"] = time.time()
             self._json({"ok": True})
+        elif self.path == "/align_preview":
+            d = self._read()
+            b, a = d.get("before"), d.get("after")
+            if not (b and a and os.path.isfile(b) and os.path.isfile(a)):
+                self._json({"error": "图片不存在"})
+                return
+            try:
+                import align as _align
+                from PIL import Image as _Im
+                nudge = d.get("nudge") or None
+                B, A = _Im.open(b), _Im.open(a)
+                card = (540, 960)
+                if d.get("off"):
+                    bc = _align.fit_card(B, card)
+                    ac = _align.fit_card(A, card)
+                    info = {"method": "off", "score": 0, "gain": 0,
+                            "scale": 1, "dx": 0, "dy": 0}
+                else:
+                    bc, ac, info = _align.align_pair(
+                        B, A, card, fill=bool(d.get("fill", True)),
+                        nudge=nudge)
+                    info = {k: info[k] for k in
+                            ("method", "score", "gain", "scale", "dx", "dy")}
+                # 梳齿交错预览：错位时人物边缘会呈锯齿
+                out = bc.copy()
+                n, step = 10, card[1] // 10
+                for i in range(n):
+                    if i % 2:
+                        y0 = i * step
+                        out.paste(ac.crop((0, y0, card[0],
+                                           min(card[1], y0 + step))), (0, y0))
+                tmp = os.path.join(app_support_dir(), "align_preview")
+                os.makedirs(tmp, exist_ok=True)
+                p = os.path.join(tmp, f"p{abs(hash((b, a, str(nudge), d.get('off'), d.get('fill'))))%99999}.jpg")
+                out.save(p, "JPEG", quality=86)
+                self._json({"img": p, "info": info})
+            except Exception as e:
+                self._json({"error": f"{type(e).__name__}: {e}"})
         elif self.path == "/rosie_init":
             self._json({"presets": rosie.load_presets(),
                         "assets": rosie.resolve_assets(),
@@ -1684,6 +1788,10 @@ class Handler(BaseHTTPRequestHandler):
                     label_before=(d.get("label_before") or "").strip(),
                     label_after=(d.get("label_after") or "").strip(),
                     scene_sec=float(d.get("scene_sec") or 3.6),
+                    align_mode="off" if d.get("align_off") else "auto",
+                    align_fill=bool(d.get("align_fill", True)),
+                    nudges={int(k): v for k, v in
+                            (d.get("nudges") or {}).items()},
                     transition=d.get("transition") or "spin",
                     slider=d.get("slider") or "sweep",
                     direction=d.get("direction") or "rtl",

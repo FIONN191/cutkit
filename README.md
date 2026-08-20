@@ -41,6 +41,8 @@ Mode 1's top caption defaults to the TikTok-safe top band (y≈270 on 1080×1920
   每次生成都会记进历史，带封面缩略图、模式、时长、分辨率、大小和时间；可播放、在 Finder 定位、复制出去或删除。透明 MOV 的封面会自动垫深色底，不会看着一片黑。
 - **JianYing / 剪映素材夹** — optionally drop every render into one folder (default `~/Movies/CutKit 素材`). JianYing Pro encrypts its per-draft material list and declares no document types, so nothing can register media into its library programmatically; pointing 导入 → 素材 at this folder once is the closest reliable equivalent — after that the file dialog always reopens there.
   可选把每次成片同时放进一个固定文件夹（默认 `~/Movies/CutKit 素材`）。剪映专业版的草稿素材表是加密的、且没有声明任何 document type，所以任何程序都没法直接写进它的素材库；在剪映里 导入 → 素材 定位一次这个文件夹，之后文件框每次都停在这，是能可靠做到的最接近的做法。
+- **Subject alignment / 人物对齐** — before/after images often differ in aspect ratio, and an AI-regenerated subject can be shifted or scaled, so the person doesn't line up across the slider. CutKit estimates a similarity transform (scale + translation + small rotation) and warps the After image onto the Before. Three strategies with automatic fallback — SIFT+RANSAC feature matching, ECC on gradient images (works when the subject is repainted), and phase correlation — scored by edge NCC, so a bad match is rejected rather than forced. By default both frames are cropped to their common area so there is no edge smearing. Per-pair comb preview with arrow-key nudging when you want to fine-tune.
+  前后图常常比例不同，人物被 AI 重绘后还会位移缩放，滑杆两边接不上。CutKit 会估计相似变换（缩放+平移+小角度旋转）把 After 对到 Before：特征匹配 SIFT+RANSAC、梯度 ECC（人物被重绘时仍可用）、相位相关三种策略自动兜底，用边缘 NCC 打分——匹配不可靠时宁可不动也不硬套。默认把两张图裁到共同区域，不留边缘拉丝。每对可开梳齿预览并用方向键手动微调。
 - **Native app / 原生应用** — a native WKWebView window (pywebview), no browser tab. Settings are remembered; outputs never overwrite (auto `-2`/`-3` suffix).
   原生窗口，非浏览器标签页；参数自动记忆；成片不覆盖旧文件（自动加 `-2`/`-3` 后缀）。
 - **Self-contained / 零依赖** — ffmpeg is bundled (imageio-ffmpeg); frames are drawn with Pillow and piped straight into H.264.
@@ -111,6 +113,7 @@ pyinstaller --noconfirm CutKit.spec   # → dist/CutKit.app
 | `render.py` | slider-video render engine + auto-pairing + CLI / 滑杆视频渲染引擎 + 自动配对 |
 | `screencut.py` | screen-recording analyzer (wait-cut) + step captions / 录屏等待剪除 + 步骤字幕 |
 | `rosiecut.py` `rosie.py` `nl.py` `analyze.py` | Fotor screen-recording auto-edit + natural-language params / 录屏自动剪辑 + 自然语言参数 |
+| `align.py` | before/after subject alignment / 前后图人物对齐 |
 | `history.py` | render history + JianYing material folder / 生成历史 + 剪映素材夹 |
 | `dragdemo.py` `assets/` | drag-photo demo (2 motions, MP4 + transparent MOV) + bundled Fotor transition / 拖照片演示（两种动画、MP4 与透明 MOV）+ 内置 Fotor 转场 |
 | `ringarrow.py` | ring+arrow badge → transparent MOV / 圆环箭头角标 → 透明底 MOV |

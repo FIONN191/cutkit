@@ -206,9 +206,13 @@ class Renderer:
                  reveal=None, direction="rtl", comment_user="@user",
                  comment_text="can u remove the matcha filter from this",
                  progress_text="Removing filter",
+                 align_mode="auto", align_fill=True, nudges=None,
                  progress=None, log=None):
         if not pairs:
             raise ValueError("没有图片对")
+        self.align_mode = align_mode or "auto"
+        self.align_fill = bool(align_fill)
+        self.nudges = nudges or {}
         self.pairs = pairs
         self.out_path = out_path
         self.caption = caption or ""
@@ -277,11 +281,9 @@ class Renderer:
             for i, (b, a) in enumerate(pairs):
                 self.log(f"加载第 {i+1} 对: {os.path.basename(b)}  ↔  {os.path.basename(a)}")
                 bs, as_ = ("right", "left") if self.ltr else ("left", "right")
-                self.scenes.append(dict(
-                    before=self._load_card(b, self.label_before, bs),
-                    after=self._load_card(a, self.label_after, as_),
-                    handle=self.handles[i],
-                ))
+                bc, ac, _info = self._load_pair(b, a, bs, as_, i)
+                self.scenes.append(dict(before=bc, after=ac,
+                                        handle=self.handles[i]))
         # 按需预计算（都是每片一次，不进逐帧循环）
         self.field = (_blob_field(self.CW, self.CH, (0.5, 0.42))
                       if self.reveal == "reverse" else None)
@@ -290,11 +292,7 @@ class Renderer:
         self.UI = self._build_ui()
 
     # ---------- 素材与静态层 ----------
-    def _load_card(self, path, label, side):
-        img = Image.open(path).convert("RGB")
-        img = ImageOps.exif_transpose(img)
-        img = ImageOps.fit(img, (self.CW, self.CH), method=Image.LANCZOS,
-                           centering=(0.5, 0.5))
+    def _label_card(self, img, label, side):
         d = ImageDraw.Draw(img, "RGBA")
         m = 48
         if label:
@@ -303,6 +301,37 @@ class Renderer:
             else:
                 _text_shadow(d, (self.CW - m, self.label_pos), label, self.f_label, anchor="ra")
         return img
+
+    def _load_card(self, path, label, side):
+        img = ImageOps.exif_transpose(Image.open(path).convert("RGB"))
+        img = ImageOps.fit(img, (self.CW, self.CH), method=Image.LANCZOS,
+                           centering=(0.5, 0.5))
+        return self._label_card(img, label, side)
+
+    def _load_pair(self, bpath, apath, bside, aside, idx):
+        """成对加载；开了自动对齐就先把 after 对到 before 再贴标签。"""
+        bimg = Image.open(bpath)
+        aimg = Image.open(apath)
+        info = None
+        if self.align_mode != "off":
+            try:
+                import align as _align
+                nudge = (self.nudges or {}).get(idx)
+                bc, ac, info = _align.align_pair(
+                    bimg, aimg, (self.CW, self.CH),
+                    fill=self.align_fill, nudge=nudge, log=self.log)
+            except Exception as e:
+                self.log(f"对齐失败({type(e).__name__})，按原样裁切: {e}")
+                info = None
+        if info is None:
+            bc = ImageOps.fit(ImageOps.exif_transpose(bimg).convert("RGB"),
+                              (self.CW, self.CH), method=Image.LANCZOS,
+                              centering=(0.5, 0.5))
+            ac = ImageOps.fit(ImageOps.exif_transpose(aimg).convert("RGB"),
+                              (self.CW, self.CH), method=Image.LANCZOS,
+                              centering=(0.5, 0.5))
+        return (self._label_card(bc, self.label_before, bside),
+                self._label_card(ac, self.label_after, aside), info)
 
     def _build_ui(self):
         return Image.new("RGB", (self.W, self.H), (0, 0, 0))
@@ -707,6 +736,10 @@ def main(argv):
     ap.add_argument("--progress-text", default="Removing filter",
                     help="progress 模式进度条上方的文案")
     ap.add_argument("--audio", default=None, help="BGM 音频文件")
+    ap.add_argument("--no-align", action="store_true",
+                    help="关闭人物自动对齐（默认开启）")
+    ap.add_argument("--align-keep-frame", action="store_true",
+                    help="对齐时保留 before 的完整构图（默认裁到共同区域）")
     ap.add_argument("--plan-only", action="store_true", help="只打印配对结果不渲染")
     args = ap.parse_args(argv)
 
@@ -726,6 +759,8 @@ def main(argv):
                  direction=args.direction,
                  comment_user=args.comment_user, comment_text=args.comment_text,
                  progress_text=args.progress_text,
+                 align_mode="off" if args.no_align else "auto",
+                 align_fill=not args.align_keep_frame,
                  transition=args.transition, audio_path=args.audio,
                  progress=lambda d, t: (d % 60 == 0) and print(f"{d}/{t}"),
                  log=print)
