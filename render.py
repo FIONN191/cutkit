@@ -9,6 +9,7 @@ import math
 import os
 import subprocess
 import sys
+import threading
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -24,6 +25,101 @@ def ffmpeg_exe():
             if os.path.exists(p):
                 return p
         return "ffmpeg"
+
+
+# ---------- 取消生成 ----------
+# 所有渲染模块共用这一套：前端点「取消」后，帧循环在下一帧抛 Cancelled，
+# 同时注册表里正在跑的 ffmpeg 会被直接杀掉（编码阶段不吃帧循环的检查）。
+class Cancelled(Exception):
+    """用户中途取消了生成。"""
+
+
+_CANCEL = threading.Event()
+_PROCS = set()
+_PROCS_LOCK = threading.Lock()
+
+
+def request_cancel():
+    _CANCEL.set()
+    with _PROCS_LOCK:
+        procs = list(_PROCS)
+    for pr in procs:
+        try:
+            pr.kill()
+        except Exception:
+            pass
+
+
+def clear_cancel():
+    _CANCEL.clear()
+
+
+def is_cancelled():
+    return _CANCEL.is_set()
+
+
+def check_cancel():
+    if _CANCEL.is_set():
+        raise Cancelled()
+
+
+class track_proc:
+    """把 ffmpeg 子进程登记进注册表，取消时能被杀掉。"""
+
+    def __init__(self, proc):
+        self.proc = proc
+
+    def __enter__(self):
+        with _PROCS_LOCK:
+            _PROCS.add(self.proc)
+        return self.proc
+
+    def __exit__(self, *a):
+        with _PROCS_LOCK:
+            _PROCS.discard(self.proc)
+        return False
+
+
+def abort_proc(proc, out_path=None):
+    """取消时收尾：杀进程、删掉写了一半的文件。"""
+    for fn in (lambda: proc.kill(),
+               lambda: proc.stdin and proc.stdin.close(),
+               lambda: proc.wait(timeout=5)):
+        try:
+            fn()
+        except Exception:
+            pass
+    if out_path and os.path.exists(out_path):
+        try:
+            os.remove(out_path)
+        except Exception:
+            pass
+
+
+def bail_if_cancelled(proc, out_path=None):
+    """取消时我们直接杀 ffmpeg，管道会先炸出 BrokenPipe / 非零退出码。
+    这里把那种「假失败」还原成 Cancelled，免得界面报成渲染出错。"""
+    if is_cancelled():
+        abort_proc(proc, out_path)
+        raise Cancelled()
+
+
+def run_tracked(cmd, out_path=None, **kw):
+    """subprocess.run 的可取消版本：注册进程，取消时被杀掉后抛 Cancelled。
+    传了 out_path 的话，取消时顺手删掉写了一半的输出文件。"""
+    kw.pop("capture_output", None)          # Popen 不认这个参数，下面固定收管道
+    kw.setdefault("stdout", subprocess.PIPE)
+    kw.setdefault("stderr", subprocess.PIPE)
+    proc = subprocess.Popen(cmd, **kw)
+    with track_proc(proc):
+        out, err = proc.communicate()
+    if is_cancelled() and out_path and os.path.exists(out_path):
+        try:
+            os.remove(out_path)
+        except Exception:
+            pass
+    check_cancel()
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
 # ---------- fonts ----------
@@ -606,11 +702,16 @@ class Renderer:
                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         broken = False
         try:
-            for n in range(self.total):
-                proc.stdin.write(self.frame_at(n).tobytes())
-                self.progress(n + 1, self.total)
+            with track_proc(proc):
+                for n in range(self.total):
+                    check_cancel()
+                    proc.stdin.write(self.frame_at(n).tobytes())
+                    self.progress(n + 1, self.total)
         except BrokenPipeError:
             broken = True
+        except Cancelled:
+            abort_proc(proc, self.out_path)
+            raise
         try:
             proc.stdin.close()
         except Exception:
@@ -618,6 +719,7 @@ class Renderer:
         err = proc.stderr.read()
         proc.wait()
         if proc.returncode != 0 or broken:
+            bail_if_cancelled(proc, self.out_path)
             raise RuntimeError("ffmpeg 编码失败:\n" +
                                err.decode("utf-8", "ignore")[-2000:])
         self.log("编码完成 ✅")

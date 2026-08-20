@@ -14,7 +14,9 @@ import sys
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
-from render import ffmpeg_exe, _font, _smooth
+from render import (ffmpeg_exe, _font, _smooth,
+                    Cancelled, check_cancel, track_proc, abort_proc,
+                    bail_if_cancelled)
 
 W, H = 1080, 1920
 FPS = 30
@@ -537,11 +539,18 @@ class DragDemo:
                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         broken = False
         try:
-            for n in range(self.total):
-                proc.stdin.write(self.frame_at(n).tobytes())
-                self.progress(n + 1, self.total)
+            with track_proc(proc):
+                for n in range(self.total):
+                    check_cancel()
+                    proc.stdin.write(self.frame_at(n).tobytes())
+                    self.progress(n + 1, self.total)
         except BrokenPipeError:
             broken = True
+        except Cancelled:
+            if self.stream is not None:
+                self.stream.close()
+            abort_proc(proc, self.out_path)
+            raise
         finally:
             if self.stream is not None:
                 self.stream.close()
@@ -552,6 +561,7 @@ class DragDemo:
         err = proc.stderr.read()
         proc.wait()
         if proc.returncode != 0 or broken:
+            bail_if_cancelled(proc, self.out_path)
             raise RuntimeError("ffmpeg 编码失败:\n" + err.decode("utf-8", "ignore")[-2000:])
         self.log("编码完成 ✅")
         return self.out_path

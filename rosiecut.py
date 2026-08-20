@@ -25,6 +25,8 @@ import sys
 import cv2
 import numpy as np
 
+from render import check_cancel, run_tracked
+
 try:
     import imageio_ffmpeg
     FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
@@ -648,7 +650,7 @@ def render(path, segs, crop, out_path, out_fps=30, dims=None,
     if rng:
         cmd += ["-color_range", rng]
     cmd += [out_path]
-    p = subprocess.run(cmd, capture_output=True, text=True, creationflags=NO_WINDOW)
+    p = run_tracked(cmd, out_path=out_path, text=True, creationflags=NO_WINDOW)
     if p.returncode:
         raise RuntimeError(f"ffmpeg 失败 ({p.returncode}):\n{p.stderr.strip()[-2000:]}")
 

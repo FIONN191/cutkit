@@ -14,7 +14,9 @@ import sys
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
-from render import ffmpeg_exe, _smooth
+from render import (ffmpeg_exe, _smooth,
+                    Cancelled, check_cancel, track_proc, abort_proc,
+                    bail_if_cancelled)
 
 SS = 4                      # 超采样倍数（抗锯齿）
 
@@ -116,24 +118,29 @@ def render_mov(badge, out_path, dur=8.0, fps=30, pop=False, log=None):
     POP = 0.45
     broken = False
     try:
-        for n in range(total):
-            t = n / fps
-            if pop and t < POP:
-                e = _smooth(t / POP)
-                s = 0.35 + 0.65 * e          # 缩放弹入
-                fr = blank.copy()
-                sw, sh = max(2, int(W * s)), max(2, int(H * s))
-                sc = badge.resize((sw, sh), Image.LANCZOS)
-                # 以角标圆心为锚点缩放
-                ax, ay = CENTER[0] * W, CENTER[1] * H
-                fr.alpha_composite(sc, (int(ax - ax * s), int(ay - ay * s)))
-                a = fr.split()[3].point(lambda v: int(v * e))
-                fr.putalpha(a)
-            else:
-                fr = badge
-            proc.stdin.write(fr.tobytes())
+        with track_proc(proc):
+            for n in range(total):
+                check_cancel()
+                t = n / fps
+                if pop and t < POP:
+                    e = _smooth(t / POP)
+                    s = 0.35 + 0.65 * e          # 缩放弹入
+                    fr = blank.copy()
+                    sw, sh = max(2, int(W * s)), max(2, int(H * s))
+                    sc = badge.resize((sw, sh), Image.LANCZOS)
+                    # 以角标圆心为锚点缩放
+                    ax, ay = CENTER[0] * W, CENTER[1] * H
+                    fr.alpha_composite(sc, (int(ax - ax * s), int(ay - ay * s)))
+                    a = fr.split()[3].point(lambda v: int(v * e))
+                    fr.putalpha(a)
+                else:
+                    fr = badge
+                proc.stdin.write(fr.tobytes())
     except BrokenPipeError:
         broken = True
+    except Cancelled:
+        abort_proc(proc, out_path)
+        raise
     try:
         proc.stdin.close()
     except Exception:
@@ -141,6 +148,7 @@ def render_mov(badge, out_path, dur=8.0, fps=30, pop=False, log=None):
     err = proc.stderr.read()
     proc.wait()
     if proc.returncode != 0 or broken:
+        bail_if_cancelled(proc, out_path)
         raise RuntimeError("ffmpeg 编码失败:\n" + err.decode("utf-8", "ignore")[-2000:])
     log("编码完成 ✅")
     return out_path

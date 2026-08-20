@@ -38,6 +38,7 @@ STATE = {
     "video": None,        # 已分析的录屏路径
     "prog_done": 0,
     "prog_total": 0,
+    "cancelled": False,
     "last_ping": time.time(),
 }
 LOCK = threading.Lock()
@@ -82,6 +83,64 @@ def uploads_out_folder():
         return d
     except Exception:
         return os.path.expanduser("~")
+
+
+VIDEO_EXTS = (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm")
+AUDIO_EXTS = (".mp3", ".m4a", ".aac", ".wav", ".aiff", ".aif", ".flac", ".ogg")
+KIND_EXTS = {"image": render.IMG_EXTS, "video": VIDEO_EXTS, "audio": AUDIO_EXTS}
+
+
+def _upload_name(name, kind):
+    """清洗出一个安全的落盘文件名，保留原扩展名（在该类型白名单内）。"""
+    ext = os.path.splitext(name or "")[1].lower()
+    allowed = KIND_EXTS.get(kind)
+    if allowed and ext not in allowed:
+        ext = allowed[0]
+    elif not ext:
+        ext = ".bin"
+    stem = "".join(c for c in os.path.splitext(os.path.basename(name or "file"))[0]
+                   if c.isalnum() or c in "-_ ")[:48] or "file"
+    return f"{int(time.time()*1000)}-{stem}{ext}"
+
+
+def _probe_ok(path, kind):
+    """用 ffmpeg 读一下文件头，确认真有对应的音/视频流。"""
+    try:
+        r = subprocess.run([render.ffmpeg_exe(), "-v", "error", "-i", path,
+                            "-t", "0", "-f", "null", "-"],
+                           capture_output=True, timeout=20)
+    except Exception:
+        return True                    # 探测本身失败就别拦着用户
+    if r.returncode != 0:
+        return False
+    try:
+        info = subprocess.run([render.ffmpeg_exe(), "-i", path],
+                              capture_output=True, timeout=20).stderr.decode("utf-8", "ignore")
+    except Exception:
+        return True
+    want = "Video:" if kind == "video" else "Audio:"
+    return want in info
+
+
+def save_upload_stream(name, kind, src, length):
+    """把拖进来的文件边读边落盘，不整个进内存（录屏可能上 GB）。"""
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    path = os.path.join(UPLOAD_DIR, _upload_name(name, kind))
+    left = length
+    with open(path, "wb") as f:
+        while left > 0:
+            chunk = src.read(min(1 << 20, left))
+            if not chunk:
+                break
+            f.write(chunk)
+            left -= len(chunk)
+    if left > 0:                      # 传输中断，别留半个文件
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        raise IOError("文件没传完")
+    return path
 
 
 def save_upload(name, raw):
@@ -250,6 +309,10 @@ def worker_rosie(src, params, mode, overlay, sizes):
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, out=out)
         _record(out, "rosie")
+    except render.Cancelled:
+        log("已取消 ⏹")
+        with LOCK:
+            STATE.update(busy=False, done=True, ok=False, cancelled=True)
     except Exception:
         log("❌ 出错了:\n" + traceback.format_exc())
         with LOCK:
@@ -278,6 +341,10 @@ def worker(pairs, opts):
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, out=out)
         _record(out, STATE.get("kind", ""))
+    except render.Cancelled:
+        log("已取消 ⏹")
+        with LOCK:
+            STATE.update(busy=False, done=True, ok=False, cancelled=True)
     except Exception:
         log("出错了:\n" + traceback.format_exc(limit=3))
         with LOCK:
@@ -296,6 +363,10 @@ def worker_analyze(video):
         log(f"成片时长 ≈ {p['out_len']}s")
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, plan=p, video=video)
+    except render.Cancelled:
+        log("已取消 ⏹")
+        with LOCK:
+            STATE.update(busy=False, done=True, ok=False, cancelled=True)
     except Exception:
         log("出错了:\n" + traceback.format_exc(limit=3))
         with LOCK:
@@ -312,6 +383,10 @@ def worker_screen(video, plan_d, texts, out, audio, zoom_end, zoom_photo):
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, out=out)
         _record(out, STATE.get("kind", ""))
+    except render.Cancelled:
+        log("已取消 ⏹")
+        with LOCK:
+            STATE.update(busy=False, done=True, ok=False, cancelled=True)
     except Exception:
         log("出错了:\n" + traceback.format_exc(limit=3))
         with LOCK:
@@ -334,6 +409,10 @@ def worker_demo(photo, result, caption, out, opts=None):
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, out=out)
         _record(out, STATE.get("kind", ""))
+    except render.Cancelled:
+        log("已取消 ⏹")
+        with LOCK:
+            STATE.update(busy=False, done=True, ok=False, cancelled=True)
     except Exception:
         log("出错了:\n" + traceback.format_exc(limit=3))
         with LOCK:
@@ -352,6 +431,10 @@ def worker_ring(opts):
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, out=opts["out"])
         _record(opts["out"], "ring")
+    except render.Cancelled:
+        log("已取消 ⏹")
+        with LOCK:
+            STATE.update(busy=False, done=True, ok=False, cancelled=True)
     except Exception:
         log("出错了:\n" + traceback.format_exc(limit=3))
         with LOCK:
@@ -399,6 +482,11 @@ input,select{background:#131318;color:var(--txt);border:1px solid #34343f;border
   gap:10px;cursor:pointer;background:#15171b;transition:border-color .15s,background .15s}
 .drop:hover{border-color:#5a626e;background:#191c21}
 .drop.over{border-color:var(--acc);background:#241a14}
+button.cancel{background:#3a2320;border:1px solid #6b3a30;color:#ffb9a6}
+button.cancel:hover{background:#4a2c27}
+.dz{border:1px dashed transparent;border-radius:10px;padding:6px;margin:-6px;transition:border-color .12s,background .12s}
+.dz.over{border-color:var(--acc);background:#241a14}
+.dzhint{color:#6f7480;font-size:12px;margin-left:2px}
 .drop .ico{font-size:34px;line-height:1}
 .drop .txt{font-weight:700;font-size:14px;color:#c9ced6}
 .drop img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
@@ -457,10 +545,10 @@ border-radius:10px;display:none}
 <div class="card">
 <h2>① 上传图片</h2>
 <div class="uprow">
-<div class="upcol"><label>Before Image <span>· 带抹茶滤镜的图</span></label>
+<div class="upcol"><label>Before Image</label>
 <div class="drop" id="dropB" onclick="pickInto('B')"></div>
 <div class="upname" id="nameB"></div></div>
-<div class="upcol"><label>After Image <span>· 去掉滤镜后的图</span></label>
+<div class="upcol"><label>After Image</label>
 <div class="drop" id="dropA" onclick="pickInto('A')"></div>
 <div class="upname" id="nameA"></div></div>
 </div>
@@ -516,9 +604,10 @@ border-radius:10px;display:none}
 <input id="comment_text" value="can u remove the matcha filter from this"></div>
 <div class="rvprogress" style="display:none"><label>进度条文案</label>
 <input id="progress_text" value="Removing filter"></div>
-<div><label>BGM（可选）</label><div class="row">
+<div><label>BGM（可选）</label><div class="dz" id="zBgm1"><div class="row">
 <button class="small" onclick="pickAudio()">选择…</button>
-<button class="small" onclick="clearAudio()">清除</button></div>
+<button class="small" onclick="clearAudio()">清除</button>
+<span class="dzhint">或拖音频到这里</span></div></div>
 <div class="hint" id="audioName" style="margin-top:4px"></div></div>
 </div>
 </div>
@@ -527,6 +616,7 @@ border-radius:10px;display:none}
 <h2>③ 生成</h2>
 <div class="row">
 <button class="primary" id="go" onclick="run()" disabled>生成视频</button>
+<button class="cancel" id="cancel_go" onclick="cancelRun()" style="display:none">取消生成</button>
 <div class="hint" id="outHint"></div>
 </div>
 <div id="bar"><i id="fill"></i></div>
@@ -541,9 +631,12 @@ border-radius:10px;display:none}
 <div id="modeScreen" class="mode">
 <div class="card">
 <h2>① 原始录屏</h2>
+<div class="dz" id="zVideo">
 <div class="row">
 <button onclick="pickVideo()">选择录屏文件…</button>
 <div class="folder" id="videoPath"></div>
+</div>
+<div class="dzhint">或把录屏文件直接拖到这里</div>
 </div>
 <div id="planBox"></div>
 <div class="hint">选滤镜 App 的完整操作录屏，自动剪掉中间的等待时间（AI 生成排队等），压成 ~15 秒节奏。</div>
@@ -555,10 +648,11 @@ border-radius:10px;display:none}
 <div style="grid-column:1/4"><label class="row" style="gap:6px;font-size:14px;color:var(--txt)">
 <input type="checkbox" id="addCaps" checked style="width:auto" onchange="capsToggled()"> 添加步骤字幕</label></div>
 <div><label>滤镜名（自动填入第 2 条）</label><input id="filterName" placeholder="Game Face" oninput="filterChanged()"></div>
-<div style="grid-column:2/4"><label>BGM（可选，复用左侧已选）</label><div class="row">
+<div style="grid-column:2/4"><label>BGM（可选，复用左侧已选）</label><div class="dz" id="zBgm2"><div class="row">
 <button class="small" onclick="pickAudio()">选择…</button>
 <button class="small" onclick="clearAudio()">清除</button>
-<span class="hint" id="audioName2" style="margin-top:0"></span></div></div>
+<span class="dzhint">或拖音频到这里</span>
+<span class="hint" id="audioName2" style="margin-top:0"></span></div></div></div>
 <div><label>字幕 1 · 选照片</label><input id="cap0" value="Select Photo"></div>
 <div><label>字幕 2 · 选滤镜</label><input id="cap1" value="Select the Effect" oninput="cap1Edited=true"></div>
 <div><label>字幕 3 · 等待</label><input id="cap2" value="Wait...."></div>
@@ -567,8 +661,10 @@ border-radius:10px;display:none}
 <div class="row">
 <label class="row" style="gap:6px;font-size:14px;color:var(--txt)">
 <input type="checkbox" id="zoomEnd" checked style="width:auto"> 结尾放大最终结果图（原图放大铺满 + 定格 1.8s，需选原图）</label>
+<span class="dz" id="zZoom" style="display:inline-flex;align-items:center;gap:8px">
 <button class="small" onclick="pickZoomPhoto()">选结果原图…</button>
 <button class="small" onclick="clearZoomPhoto()">清除</button>
+<span class="dzhint">或拖图片到这里</span></span>
 <span class="hint" id="zoomPhotoName" style="margin-top:0"></span>
 </div></div>
 </div>
@@ -578,6 +674,7 @@ border-radius:10px;display:none}
 <h2>③ 生成</h2>
 <div class="row">
 <button class="primary" id="goScreen" onclick="runScreen()" disabled>剪辑生成</button>
+<button class="cancel" id="cancel_goScreen" onclick="cancelRun()" style="display:none">取消生成</button>
 <div class="hint" id="outHint2"></div>
 </div>
 <div id="bar2" style="display:none;height:10px;background:#26262f;border-radius:5px;overflow:hidden;margin:10px 0 6px"><i id="fill2" style="display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .2s"></i></div>
@@ -592,14 +689,20 @@ border-radius:10px;display:none}
 <div id="modeDemo" class="mode">
 <div class="card">
 <h2>① 照片</h2>
+<div class="dz" id="zDemoPhoto">
 <div class="row">
 <button onclick="pickDemoPhoto()">选择要上传演示的照片…</button>
 <div class="folder" id="demoPhoto"></div>
 </div>
-<div class="row" style="margin-top:10px">
+<div class="dzhint">或把照片直接拖到这里</div>
+</div>
+<div class="dz" id="zDemoResult" style="margin-top:10px">
+<div class="row">
 <button onclick="pickDemoResult()">选 AI 结果图（可选）…</button>
 <button class="small" onclick="clearDemoResult()">清除</button>
 <div class="folder" id="demoResult"></div>
+</div>
+<div class="dzhint">或把结果图直接拖到这里</div>
 </div>
 <div class="hint">复刻「上传一张照片」的教程演示：虚线上传框 → 照片飞入落框回弹 → Fotor 彩色转场（进度环 + AI Generated 徽章，自带压暗）。选了结果图的话，徽章出现时会淡入成结果。</div>
 </div>
@@ -631,6 +734,7 @@ border-radius:10px;display:none}
 <h2>③ 生成</h2>
 <div class="row">
 <button class="primary" id="goDemo" onclick="runDemo()" disabled>生成演示视频</button>
+<button class="cancel" id="cancel_goDemo" onclick="cancelRun()" style="display:none">取消生成</button>
 <div class="hint" id="outHint3"></div>
 </div>
 <div id="bar3" style="display:none;height:10px;background:#26262f;border-radius:5px;overflow:hidden;margin:10px 0 6px"><i id="fill3" style="display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .2s"></i></div>
@@ -645,9 +749,12 @@ border-radius:10px;display:none}
 <div id="modeRing" class="mode">
 <div class="card">
 <h2>① 原图 <span class="hint" style="margin:0">任意比例都行，自动圆形裁切</span></h2>
+<div class="dz" id="zRing">
 <div class="row">
 <button onclick="pickRingPhoto()">选择原图…</button>
 <div class="folder" id="ringPhoto"></div>
+</div>
+<div class="dzhint">或把图片直接拖到这里</div>
 </div>
 <div class="row" style="align-items:flex-start;margin-top:12px">
 <img id="ringPv" style="width:180px;border-radius:10px;background:#111;display:none">
@@ -682,6 +789,7 @@ border-radius:10px;display:none}
 </div>
 <div class="row" style="margin-top:14px">
 <button class="primary" id="goRing" onclick="runRing()" disabled>生成透明底 MOV</button>
+<button class="cancel" id="cancel_goRing" onclick="cancelRun()" style="display:none">取消生成</button>
 <div class="hint" id="outHint4"></div>
 </div>
 <div class="hint" id="prog4"></div>
@@ -695,9 +803,12 @@ border-radius:10px;display:none}
 <div id="modeRosie" class="mode">
 <div class="card">
 <h2>① 录屏文件</h2>
+<div class="dz" id="zRosie">
 <div class="row">
 <button onclick="pickRosieSrc()">选择文件…</button>
 <div class="folder" id="rosieSrc"></div>
+</div>
+<div class="dzhint">或把录屏文件直接拖到这里</div>
 </div>
 <div class="hint">Fotor 录屏自动剪辑：识别「涂抹 / 打字 / 等待」三种状态，按节拍重排时长、自动裁剪，自然流版本还会把等待段换成无 logo 画面并叠加预合成动画与水印。</div>
 </div>
@@ -754,6 +865,7 @@ border-radius:10px;display:none}
 <h2>⑤ 生成</h2>
 <div class="row">
 <button class="primary" id="goRosie" onclick="runRosie()" disabled>开始剪辑</button>
+<button class="cancel" id="cancel_goRosie" onclick="cancelRun()" style="display:none">取消生成</button>
 </div>
 <div class="hint" id="progRosie"></div>
 <div id="doneRowRosie" class="row" style="display:none;gap:10px;margin-top:10px">
@@ -931,6 +1043,113 @@ async function uploadFile(k,file){
     tryPair();
   }else{ $('prog').textContent=r.error||'上传失败'; paintSlot(k); }
 }
+// ---------- 通用拖拽上传 ----------
+// 图片走内存即可，录屏可能上 GB，一律用 XHR 流式发给 /upload_stream。
+const DZ_PAT={image:/\.(jpe?g|png|webp|bmp|tiff?|heic)$/i,
+              video:/\.(mp4|mov|m4v|avi|mkv|webm)$/i,
+              audio:/\.(mp3|m4a|aac|wav|aiff?|flac|ogg)$/i};
+const DZ_LABEL={image:'图片',video:'视频',audio:'音频'};
+
+function dzKindOk(file,kind){
+  const t=file.type||'';
+  if(kind==='image'&&/^image\//.test(t))return true;
+  if(kind==='video'&&/^video\//.test(t))return true;
+  if(kind==='audio'&&/^audio\//.test(t))return true;
+  return DZ_PAT[kind].test(file.name||'');
+}
+
+function uploadStream(file,kind,onProg){
+  return new Promise(resolve=>{
+    const x=new XMLHttpRequest();
+    x.open('POST','/upload_stream');
+    x.setRequestHeader('X-Filename',encodeURIComponent(file.name||'file'));
+    x.setRequestHeader('X-Kind',kind);
+    x.upload.onprogress=e=>{if(e.lengthComputable&&onProg)onProg(e.loaded,e.total);};
+    x.onload=()=>{try{resolve(JSON.parse(x.responseText));}catch(_){resolve({error:'上传失败'});}};
+    x.onerror=()=>resolve({error:'上传失败'});
+    x.send(file);
+  });
+}
+
+// 每个投放点：接受的类型、落定后怎么用、状态提示往哪写
+const DZ={
+  zVideo:      {kind:'video', status:'prog2', apply:p=>setVideo(p)},
+  zZoom:       {kind:'image', status:'prog2',
+                apply:p=>{ZOOMPHOTO=p;$('zoomPhotoName').textContent=base(p);}},
+  zDemoPhoto:  {kind:'image', status:'prog3',
+                apply:p=>{DPHOTO=p;$('demoPhoto').textContent=base(p);$('goDemo').disabled=false;}},
+  zDemoResult: {kind:'image', status:'prog3',
+                apply:p=>{DRESULT=p;$('demoResult').textContent=base(p);}},
+  zRing:       {kind:'image', status:'prog4',
+                apply:p=>{RPHOTO=p;$('ringPhoto').textContent=base(p);
+                          $('goRing').disabled=false;ringPreview();}},
+  zRosie:      {kind:'video', status:'progRosie',
+                apply:p=>{RSRC=p;$('rosieSrc').textContent=p;$('goRosie').disabled=false;}},
+  zBgm1:       {kind:'audio', status:'prog',
+                apply:p=>{AUDIO=p;$('audioName').textContent=base(p);
+                          $('audioName2').textContent=base(p);}},
+  zBgm2:       {kind:'audio', status:'prog2',
+                apply:p=>{AUDIO=p;$('audioName').textContent=base(p);
+                          $('audioName2').textContent=base(p);}},
+};
+
+function dzSay(id,msg){const el=$(id); if(el)el.textContent=msg;}
+function mb(n){return n>=1073741824?(n/1073741824).toFixed(2)+' GB':(n/1048576).toFixed(1)+' MB';}
+
+async function dzTake(zid,file){
+  const spec=DZ[zid]; if(!spec||!file)return;
+  if(!dzKindOk(file,spec.kind)){
+    dzSay(spec.status,`这里只能放${DZ_LABEL[spec.kind]}文件`); return;
+  }
+  const big=file.size>8*1048576;
+  dzSay(spec.status, big?`读取中… 0% (${mb(file.size)})`:'读取中…');
+  const r=await uploadStream(file,spec.kind,(a,b)=>{
+    if(big)dzSay(spec.status,`读取中… ${Math.round(100*a/b)}% (${mb(b)})`);
+  });
+  if(r.error){dzSay(spec.status,r.error);return;}
+  if(r.name)NAMES[r.path]=r.name;
+  dzSay(spec.status,'');
+  spec.apply(r.path);
+}
+
+function wireZone(zid){
+  const el=$(zid); if(!el)return;
+  el.addEventListener('dragover',e=>{e.preventDefault();e.stopPropagation();el.classList.add('over');});
+  el.addEventListener('dragleave',e=>{e.stopPropagation();el.classList.remove('over');});
+  el.addEventListener('drop',e=>{
+    e.preventDefault();e.stopPropagation();el.classList.remove('over');
+    const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+    if(f)dzTake(zid,f);
+  });
+}
+
+// 兜底：拖到该模式面板的任何空白处，也送到这个模式的主输入
+const MODE_FALLBACK={screen:'zVideo',demo:'zDemoPhoto',ring:'zRing',rosie:'zRosie'};
+function wireModeFallback(modeId,mode){
+  const el=$(modeId); if(!el)return;
+  el.addEventListener('dragover',e=>{e.preventDefault();});
+  el.addEventListener('drop',e=>{
+    e.preventDefault();
+    const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+    if(!f)return;
+    if(mode==='pairs'){                     // 前后对比：填第一个空位
+      const k=!SLOT.B?'B':(!SLOT.A?'A':null);
+      if(k)uploadFile(k,f); else $('prog').textContent='两边都放好了，先等它自动配对';
+      return;
+    }
+    const z=MODE_FALLBACK[mode]; if(z)dzTake(z,f);
+  });
+}
+
+// ---------- 取消生成 ----------
+async function cancelRun(){
+  document.querySelectorAll('button.cancel').forEach(b=>{b.disabled=true;b.textContent='取消中…';});
+  const r=await post('/cancel');
+  if(!r.ok){
+    document.querySelectorAll('button.cancel').forEach(b=>{b.disabled=false;b.textContent='取消生成';});
+  }
+}
+
 function wireDrop(k){
   const el=$(k==='B'?'dropB':'dropA');
   el.addEventListener('dragover',e=>{e.preventDefault();el.classList.add('over');});
@@ -1054,7 +1273,7 @@ async function pollRosie(){
   $('logRosie').scrollTop=$('logRosie').scrollHeight;
   if(s.done){clearInterval(POLL);BUSY=false;$('goRosie').disabled=false;
     if(s.ok){$('progRosie').textContent='完成 ✅  '+s.out;$('doneRowRosie').style.display='flex';}
-    else{$('progRosie').textContent='失败 ❌（见下方日志）';}}
+    else{$('progRosie').textContent=s.cancelled?'已取消 ⏹':'失败 ❌（见下方日志）';}}
 }
 let HREC=[];
 function fmtSize(b){return b>1048576?(b/1048576).toFixed(1)+' MB':(b/1024).toFixed(0)+' KB';}
@@ -1177,7 +1396,7 @@ async function pollRing(){
   if(s.done){
     clearInterval(POLL);BUSY=false;$('goRing').disabled=false;
     if(s.ok){$('prog4').textContent='完成 ✅  '+s.out;$('doneRow4').style.display='flex';}
-    else{$('prog4').textContent='失败 ❌（见下方日志）';}
+    else{$('prog4').textContent=s.cancelled?'已取消 ⏹':'失败 ❌（见下方日志）';}
   }
 }
 let DPHOTO='', DRESULT='';
@@ -1223,7 +1442,7 @@ async function pollDemo(){
     clearInterval(POLL);BUSY=false;$('goDemo').disabled=false;
     if(s.ok){$('prog3').textContent='完成 ✅  '+s.out;$('fill3').style.width='100%';
       $('doneRow3').style.display='flex';}
-    else{$('prog3').textContent='失败 ❌（见下方日志）';}
+    else{$('prog3').textContent=s.cancelled?'已取消 ⏹':'失败 ❌（见下方日志）';}
   }
 }
 function filterChanged(){
@@ -1235,7 +1454,10 @@ async function pickVideo(){
   const r=await post('/pick_video');
   if(r.error){$('prog2').textContent=r.error;return;}
   if(!r.path)return;
-  VIDEO=r.path;PLAN=null;
+  setVideo(r.path);
+}
+function setVideo(path){
+  VIDEO=path;PLAN=null;
   $('videoPath').textContent=VIDEO;
   $('goScreen').disabled=true;
   $('planBox').style.display='';$('planBox').textContent='分析中…（检测操作与等待段）';
@@ -1288,7 +1510,7 @@ async function pollScreen(){
       $('goScreen').disabled=false;
       if(s.ok){$('prog2').textContent='完成 ✅  '+s.out;$('fill2').style.width='100%';
         $('doneRow2').style.display='flex';}
-      else{$('prog2').textContent='失败 ❌（见下方日志）';}
+      else{$('prog2').textContent=s.cancelled?'已取消 ⏹':'失败 ❌（见下方日志）';}
     }
   }
 }
@@ -1315,7 +1537,7 @@ async function poll(){
     clearInterval(POLL);BUSY=false;$('go').disabled=false;
     if(s.ok){$('prog').textContent='完成 ✅  '+s.out;$('fill').style.width='100%';
       $('doneRow').style.display='flex';}
-    else{$('prog').textContent='失败 ❌（见下方日志）';}
+    else{$('prog').textContent=s.cancelled?'已取消 ⏹':'失败 ❌（见下方日志）';}
   }
 }
 (async()=>{
@@ -1326,7 +1548,18 @@ async function poll(){
   if(s.audio){AUDIO=s.audio;$('audioName').textContent=base(AUDIO);$('audioName2').textContent=base(AUDIO);}
   syncReveal();
   wireDrop('B'); wireDrop('A'); paintSlot('B'); paintSlot('A');
+  Object.keys(DZ).forEach(wireZone);
+  [['modePairs','pairs'],['modeScreen','screen'],['modeDemo','demo'],
+   ['modeRing','ring'],['modeRosie','rosie']].forEach(([id,m])=>wireModeFallback(id,m));
+  // 拖到窗口其它地方不要让 webview 直接打开文件
   ['dragover','drop'].forEach(ev=>document.addEventListener(ev,e=>e.preventDefault()));
+  // 只在真的有任务在跑时露出取消按钮（非活动模式的按钮本来就不可见）
+  setInterval(()=>{
+    document.querySelectorAll('button.cancel').forEach(b=>{
+      b.style.display=BUSY?'':'none';
+      if(!BUSY){b.disabled=false;b.textContent='取消生成';}
+    });
+  },200);
   setInterval(()=>post('/ping'),5000);
 })();
 </script>
@@ -1513,7 +1746,8 @@ class Handler(BaseHTTPRequestHandler):
                 if STATE["busy"]:
                     self._json({"error": "正在处理中"})
                     return
-                STATE.update(busy=True, done=False, ok=False, out=None,
+                render.clear_cancel()
+                STATE.update(busy=True, done=False, ok=False, cancelled=False, out=None,
                              kind="rosie", prog_done=0, prog_total=0, lines=[])
             threading.Thread(target=worker_rosie,
                              args=(src, params,
@@ -1597,7 +1831,8 @@ class Handler(BaseHTTPRequestHandler):
                 if STATE["busy"]:
                     self._json({"error": "正在处理中"})
                     return
-                STATE.update(busy=True, done=False, ok=False, kind="analyze",
+                render.clear_cancel()
+                STATE.update(busy=True, done=False, ok=False, cancelled=False, kind="analyze",
                              plan=None, video=None, out=None,
                              prog_done=0, prog_total=0, lines=[])
             threading.Thread(target=worker_analyze, args=(path,),
@@ -1636,7 +1871,8 @@ class Handler(BaseHTTPRequestHandler):
                 if STATE["busy"]:
                     self._json({"error": "正在渲染中"})
                     return
-                STATE.update(busy=True, done=False, ok=False, kind="screen",
+                render.clear_cancel()
+                STATE.update(busy=True, done=False, ok=False, cancelled=False, kind="screen",
                              out=None, prog_done=0, prog_total=0, lines=[])
             threading.Thread(target=worker_screen,
                              args=(video, plan_d, texts, out, audio),
@@ -1693,7 +1929,8 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 if STATE["busy"]:
                     self._json({"error": "正在渲染中"}); return
-                STATE.update(busy=True, done=False, ok=False, out=None,
+                render.clear_cancel()
+                STATE.update(busy=True, done=False, ok=False, cancelled=False, out=None,
                              kind="ring", prog_done=0, prog_total=0, lines=[])
             threading.Thread(target=worker_ring, args=(opts,), daemon=True).start()
             self._json({"ok": True, "out": out})
@@ -1725,7 +1962,8 @@ class Handler(BaseHTTPRequestHandler):
                 if STATE["busy"]:
                     self._json({"error": "正在渲染中"})
                     return
-                STATE.update(busy=True, done=False, ok=False, out=None,
+                render.clear_cancel()
+                STATE.update(busy=True, done=False, ok=False, cancelled=False, out=None,
                              kind="demo", prog_done=0, prog_total=0, lines=[])
             save_settings({"demo_caption": d.get("caption", "")})
             threading.Thread(target=worker_demo,
@@ -1733,6 +1971,55 @@ class Handler(BaseHTTPRequestHandler):
                                    out, dopts),
                              daemon=True).start()
             self._json({"ok": True, "out": out})
+        elif self.path == "/upload_stream":
+            # 拖拽上传：任意类型、任意大小，边收边写盘
+            name = urllib.parse.unquote(self.headers.get("X-Filename") or "file")
+            kind = (self.headers.get("X-Kind") or "image").strip()
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 0:
+                self._json({"error": "空文件"})
+                return
+            try:
+                path = save_upload_stream(name, kind, self.rfile, length)
+            except Exception:
+                self._json({"error": "文件写入失败"})
+                return
+            if kind == "image":
+                try:
+                    from PIL import Image as _Im
+                    _Im.open(path).verify()
+                except Exception:
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+                    self._json({"error": "这不是一张能识别的图片"})
+                    return
+            elif kind in ("video", "audio"):
+                # 扩展名对不上、或者 ffmpeg 根本读不出这条流，就当场退回，
+                # 免得拖到渲染那一步才炸出一大段 ffmpeg 报错。
+                bad = os.path.splitext(path)[1].lower() not in KIND_EXTS[kind]
+                if not bad:
+                    bad = not _probe_ok(path, kind)
+                if bad:
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+                    self._json({"error": "这个文件打不开（格式不对或已损坏）"})
+                    return
+            self._json({"path": path,
+                        "name": os.path.basename(name),
+                        "out": default_out_path(uploads_out_folder())})
+        elif self.path == "/cancel":
+            with LOCK:
+                busy = STATE.get("busy")
+            if not busy:
+                self._json({"ok": False, "error": "当前没有正在生成的任务"})
+                return
+            log("正在取消 …")
+            render.request_cancel()
+            self._json({"ok": True})
         elif self.path == "/upload":
             d = self._read()
             try:
@@ -1813,7 +2100,8 @@ class Handler(BaseHTTPRequestHandler):
                 if STATE["busy"]:
                     self._json({"error": "正在渲染中"})
                     return
-                STATE.update(busy=True, done=False, ok=False, out=None,
+                render.clear_cancel()
+                STATE.update(busy=True, done=False, ok=False, cancelled=False, out=None,
                              kind="render", prog_done=0, prog_total=0, lines=[])
             save_settings({k: str(d.get(k, "")) for k in SETTING_KEYS})
             threading.Thread(target=worker, args=(pairs, opts), daemon=True).start()
@@ -1825,7 +2113,7 @@ class Handler(BaseHTTPRequestHandler):
                     "busy": STATE["busy"], "done": STATE["done"], "ok": STATE["ok"],
                     "out": STATE["out"], "done_n": STATE["prog_done"],
                     "total": STATE["prog_total"], "lines": STATE["lines"][-60:],
-                    "kind": STATE["kind"],
+                    "kind": STATE["kind"], "cancelled": STATE.get("cancelled", False),
                     "plan": (dict(n=len(p["segments"]), out_len=p["out_len"])
                              if p else None),
                 })
@@ -1871,7 +2159,7 @@ def run_gui():
     if sys.platform in ("darwin", "win32"):
         try:
             import webview
-            webview.create_window("CutKit 前后对比视频", url,
+            webview.create_window("CutKit", url,
                                   width=880, height=1000, min_size=(680, 720))
             webview.start()
             os._exit(0)

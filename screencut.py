@@ -17,7 +17,7 @@ import sys
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from render import ffmpeg_exe, _font
+from render import ffmpeg_exe, _font, check_cancel, run_tracked, track_proc
 
 W_OUT, H_OUT = 1080, 1920
 ANA_FPS = 6          # 分析帧率
@@ -60,15 +60,17 @@ def analyze(path, log=None, progress=None):
     diffs = []
     prev = None
     n_expect = max(1, int(dur * ANA_FPS))
-    while True:
-        buf = proc.stdout.read(frame_bytes)
-        if len(buf) < frame_bytes:
-            break
-        g = np.frombuffer(buf, dtype=np.uint8).astype(np.float32)
-        diffs.append(0.0 if prev is None else float(np.abs(g - prev).mean()))
-        prev = g
-        if progress and len(diffs) % 30 == 0:
-            progress(min(len(diffs), n_expect), n_expect)
+    with track_proc(proc):
+        while True:
+            check_cancel()
+            buf = proc.stdout.read(frame_bytes)
+            if len(buf) < frame_bytes:
+                break
+            g = np.frombuffer(buf, dtype=np.uint8).astype(np.float32)
+            diffs.append(0.0 if prev is None else float(np.abs(g - prev).mean()))
+            prev = g
+            if progress and len(diffs) % 30 == 0:
+                progress(min(len(diffs), n_expect), n_expect)
     proc.wait()
     return np.array(diffs), ANA_FPS, W, H, dur
 
@@ -425,7 +427,7 @@ def render_screen(src, out_path, plan_d, texts, tmp_dir,
     log(f"剪辑 {len(segs)} 段 → {full_len:.1f}s，开始编码 ...")
     if progress:
         progress(0, 0)   # 编码阶段进度未知，前端转为跑马
-    r = subprocess.run(cmd, capture_output=True)
+    r = run_tracked(cmd, out_path=main_out)
     if r.returncode != 0:
         raise RuntimeError("ffmpeg 编码失败:\n" +
                            r.stderr.decode("utf-8", "ignore")[-2000:])
