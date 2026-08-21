@@ -103,6 +103,53 @@ def _upload_name(name, kind):
     return f"{int(time.time()*1000)}-{stem}{ext}"
 
 
+FRAME_CACHE = {}
+
+
+def video_frame_png(path, keep_alpha=True, max_w=420):
+    """抽一帧当预览图。透明 MOV 保留 alpha，这样叠在预览画面上是真实效果。"""
+    key = (path, keep_alpha, max_w, os.path.getmtime(path) if os.path.exists(path) else 0)
+    if key in FRAME_CACHE:
+        return FRAME_CACHE[key]
+    if not path or not os.path.exists(path):
+        return None
+    fmt = ["-pix_fmt", "rgba"] if keep_alpha else ["-pix_fmt", "rgb24"]
+
+    def grab(t):
+        cmd = [render.ffmpeg_exe(), "-v", "error", "-ss", str(t), "-i", path,
+               "-frames:v", "1", "-vf", f"scale={max_w}:-1", *fmt,
+               "-f", "image2pipe", "-vcodec", "png", "-"]
+        try:
+            return subprocess.run(cmd, capture_output=True, timeout=25).stdout
+        except Exception:
+            return b""
+
+    if keep_alpha:
+        # 素材常带淡入，头几帧可能几乎全透明。采几个点，挑画面内容最多的那帧，
+        # 免得预览里显示一片空白让人以为素材坏了。
+        best, best_cover = b"", -1.0
+        for t in (0.2, 0.6, 1.2, 2.0):
+            d = grab(t)
+            if not d:
+                continue
+            try:
+                import numpy as _np
+                from PIL import Image as _Im
+                a = _np.array(_Im.open(io.BytesIO(d)).convert("RGBA"))[..., 3]
+                cover = float((a > 16).mean())
+            except Exception:
+                cover = 0.0
+            if cover > best_cover:
+                best, best_cover = d, cover
+        data = best or grab(0)
+    else:
+        data = grab(0.6) or grab(0)
+    if not data:
+        return None
+    FRAME_CACHE[key] = data
+    return data
+
+
 def _probe_ok(path, kind):
     """用 ffmpeg 读一下文件头，确认真有对应的音/视频流。"""
     try:
@@ -487,6 +534,26 @@ button.cancel:hover{background:#4a2c27}
 .dz{border:1px dashed transparent;border-radius:10px;padding:6px;margin:-6px;transition:border-color .12s,background .12s}
 .dz.over{border-color:var(--acc);background:#241a14}
 .dzhint{color:#6f7480;font-size:12px;margin-left:2px}
+.ovwrap{display:flex;gap:20px;align-items:flex-start;margin-top:12px;flex-wrap:wrap}
+.ovctl{flex:1;min-width:240px}
+.ovctl label{font-size:12px;color:var(--dim);display:block;margin-bottom:3px}
+.ovctl .num{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+.ovctl input[type=range]{flex:1;min-width:90px}
+.ovctl input[type=text]{width:74px}
+.ovprev{display:flex;gap:12px}
+.ovprev figcaption{font-size:11px;color:var(--dim);text-align:center;margin-top:5px;line-height:1.4}
+.ovframe{position:relative;width:124px;height:220px;border-radius:9px;overflow:hidden;
+  background:#0b0b0f;border:1px solid var(--line)}
+.ovframe .ovbg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.8}
+.ovframe .ovart{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  height:auto;display:block}
+.ovframe .ovghost{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  aspect-ratio:1;border:1px dashed #c8ccd4;border-radius:4px;
+  background:rgba(0,0,0,.55);box-shadow:0 0 0 1px rgba(0,0,0,.45);
+  display:flex;align-items:center;justify-content:center;
+  font-size:9px;color:#e2e5ea;text-align:center;line-height:1.2}
+.ovframe .ovempty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:11px;color:#5c616b;text-align:center;padding:0 10px}
 .drop .ico{font-size:34px;line-height:1}
 .drop .txt{font-weight:700;font-size:14px;color:#c9ced6}
 .drop img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
@@ -853,12 +920,45 @@ border-radius:10px;display:none}
 <input type="checkbox" id="rosieOverlay" checked style="width:auto" onchange="rosieOvChanged()"> 叠加预合成动画 + fotor 水印</label>
 </div>
 <div class="hint">动画铺在除末拍外的等待节拍，末拍只放水印，都居中。</div>
-<div id="rosieAssets" style="margin-top:10px"></div>
-<div class="grid" style="margin-top:10px">
-<div><label>预合成动画宽度（% 画面宽）</label><input id="r_precomp_size" value="7.4"></div>
-<div><label>水印宽度（% 画面宽）</label><input id="r_watermark_size" value="44"></div>
-<div style="display:flex;align-items:flex-end"><button class="small" onclick="resetRosieSizes()">恢复默认</button></div>
+<div class="row" style="margin-top:12px">
+<select id="rosieOvPreset" onchange="applyRosieOvPreset()" style="max-width:220px">
+<option value="">— 选择素材预设 —</option></select>
+<input id="rosieOvName" placeholder="预设名" style="max-width:150px">
+<button class="small" onclick="saveRosieOvPreset()">保存当前</button>
+<button class="small" onclick="delRosieOvPreset()">删除</button>
 </div>
+<div class="hint" id="ovPresetHint" style="margin-top:6px"></div>
+
+<div id="rosieAssets" style="margin-top:10px"></div>
+
+<div class="ovwrap">
+<div class="ovctl">
+<label>预合成动画宽度（% 画面宽）</label>
+<div class="num">
+<input type="range" id="r_precomp_range" min="1" max="100" step="0.1" value="7.4" oninput="ovSlid('precomp')">
+<input type="text" id="r_precomp_size" value="7.4" oninput="ovTyped()">
+</div>
+<label>水印宽度（% 画面宽）</label>
+<div class="num">
+<input type="range" id="r_watermark_range" min="1" max="100" step="0.1" value="44" oninput="ovSlid('watermark')">
+<input type="text" id="r_watermark_size" value="44" oninput="ovTyped()">
+</div>
+<button class="small" onclick="resetRosieSizes()">恢复默认</button>
+</div>
+<div class="ovprev">
+<figure><div class="ovframe" id="ovFrameP">
+  <img class="ovbg" id="ovBgP" style="display:none">
+  <img class="ovart" id="ovArtP" style="display:none">
+  <div class="ovghost" id="ovGhostP" style="display:none">未选素材</div>
+</div><figcaption>等待节拍<br>预合成动画</figcaption></figure>
+<figure><div class="ovframe" id="ovFrameW">
+  <img class="ovbg" id="ovBgW" style="display:none">
+  <img class="ovart" id="ovArtW" style="display:none">
+  <div class="ovghost" id="ovGhostW" style="display:none">未选素材</div>
+</div><figcaption>末拍<br>fotor 水印</figcaption></figure>
+</div>
+</div>
+<div class="hint" style="margin-top:8px">预览按 9:16 成片比例，素材大小即实际占比；底图取自当前录屏。</div>
 </div>
 
 <div class="card">
@@ -1084,7 +1184,7 @@ const DZ={
                 apply:p=>{RPHOTO=p;$('ringPhoto').textContent=base(p);
                           $('goRing').disabled=false;ringPreview();}},
   zRosie:      {kind:'video', status:'progRosie',
-                apply:p=>{RSRC=p;$('rosieSrc').textContent=p;$('goRosie').disabled=false;}},
+                apply:p=>{RSRC=p;$('rosieSrc').textContent=p;$('goRosie').disabled=false;ovArt();}},
   zBgm1:       {kind:'audio', status:'prog',
                 apply:p=>{AUDIO=p;$('audioName').textContent=base(p);
                           $('audioName2').textContent=base(p);}},
@@ -1200,6 +1300,10 @@ async function rosieInit(){
     o.value=n;o.textContent=n;sel.appendChild(o);});
   if(r.sizes){$('r_precomp_size').value=r.sizes.precomp;$('r_watermark_size').value=r.sizes.watermark;}
   renderRosieAssets();
+  ROV=r.ov||{presets:{},last:''};
+  renderOvPresets();
+  if(ROV.last&&ROV.presets[ROV.last])await applyRosieOvPreset();   // 默认套用最近保存的
+  else ovArt();
 }
 function renderRosieAssets(){
   const el=$('rosieAssets'); el.innerHTML='';
@@ -1213,11 +1317,97 @@ function renderRosieAssets(){
 }
 async function pickRosieAsset(kind){
   const r=await post('/rosie_asset_pick',{kind:kind});
-  RASSETS=r.assets||RASSETS; renderRosieAssets();
+  RASSETS=r.assets||RASSETS; renderRosieAssets(); ovArt();
 }
 function resetRosieSizes(){
   $('r_precomp_size').value=RDEFAULTS.precomp; $('r_watermark_size').value=RDEFAULTS.watermark;
-  post('/rosie_sizes',rSizes());
+  ovSync(); post('/rosie_sizes',rSizes());
+}
+
+// ---------- 叠加素材：尺寸可视化 ----------
+// 光看百分比数字判断不了大小，这里按 9:16 成片比例画出素材的真实占比。
+let ROV={presets:{},last:''};
+function ovPct(id,dflt){
+  const v=parseFloat($(id).value);
+  return (isFinite(v)&&v>=1&&v<=100)?v:dflt;
+}
+function ovSync(){
+  const pc=ovPct('r_precomp_size',RDEFAULTS.precomp||7.4);
+  const wm=ovPct('r_watermark_size',RDEFAULTS.watermark||44);
+  $('r_precomp_range').value=pc; $('r_watermark_range').value=wm;
+  [['P',pc],['W',wm]].forEach(([sfx,pct])=>{
+    const art=$('ovArt'+sfx), gh=$('ovGhost'+sfx);
+    art.style.width=pct+'%';           // % 是相对预览框宽 —— 与「% 画面宽」同义
+    gh.style.width=pct+'%';
+  });
+}
+function ovSlid(kind){
+  $(kind==='precomp'?'r_precomp_size':'r_watermark_size').value =
+    $(kind==='precomp'?'r_precomp_range':'r_watermark_range').value;
+  ovSync(); ovPersist();
+}
+function ovTyped(){ ovSync(); ovPersist(); }
+let ovSaveTimer=null;
+function ovPersist(){                  // 输入时别每敲一下就写盘
+  clearTimeout(ovSaveTimer);
+  ovSaveTimer=setTimeout(()=>post('/rosie_sizes',rSizes()),400);
+}
+function ovArt(){
+  [['precomp','P'],['watermark','W']].forEach(([k,sfx])=>{
+    const has=RASSETS[k]&&RASSETS[k].path;
+    const art=$('ovArt'+sfx), gh=$('ovGhost'+sfx);
+    if(has){ art.src='/asset_frame?kind='+k+'&t='+Date.now();
+             art.style.display=''; gh.style.display='none'; }
+    else   { art.removeAttribute('src'); art.style.display='none'; gh.style.display=''; }
+  });
+  ['P','W'].forEach(sfx=>{
+    const bg=$('ovBg'+sfx);
+    if(RSRC){ bg.src='/src_frame?p='+encodeURIComponent(RSRC)+'&t='+Date.now(); bg.style.display=''; }
+    else    { bg.removeAttribute('src'); bg.style.display='none'; }
+  });
+  ovSync();
+}
+
+// ---------- 叠加素材预设 ----------
+function ovData(){
+  return {precomp:(RASSETS.precomp||{}).path||'',
+          watermark:(RASSETS.watermark||{}).path||'',
+          precomp_size:ovPct('r_precomp_size',RDEFAULTS.precomp||7.4),
+          watermark_size:ovPct('r_watermark_size',RDEFAULTS.watermark||44)};
+}
+function renderOvPresets(){
+  const sel=$('rosieOvPreset'), names=Object.keys(ROV.presets||{});
+  sel.innerHTML='<option value="">— 选择素材预设 —</option>'+
+    names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if(ROV.last&&ROV.presets[ROV.last])sel.value=ROV.last;
+  $('ovPresetHint').textContent = names.length
+    ? (ROV.last?`当前：${ROV.last}（最近保存的一份，已自动选中）`:'')
+    : '把常用的素材 + 大小存成预设，下次打开自动选最近保存的那份。';
+}
+async function applyRosieOvPreset(){
+  const n=$('rosieOvPreset').value; if(!n)return;
+  const r=await post('/rosie_ov_apply',{name:n});
+  if(r.error){$('progRosie').textContent=r.error;return;}
+  RASSETS=r.assets||RASSETS;
+  if(r.sizes){$('r_precomp_size').value=r.sizes.precomp;$('r_watermark_size').value=r.sizes.watermark;}
+  if(r.ov)ROV=r.ov;
+  renderRosieAssets(); ovArt();
+  $('ovPresetHint').textContent=`已套用预设：${n}`;
+}
+async function saveRosieOvPreset(){
+  const n=$('rosieOvName').value.trim();
+  if(!n){$('ovPresetHint').textContent='请先填预设名';return;}
+  const r=await post('/rosie_ov_save',{name:n,data:ovData()});
+  if(r.error){$('ovPresetHint').textContent=r.error;return;}
+  ROV=r.ov||ROV; RASSETS=r.assets||RASSETS;
+  $('rosieOvName').value=''; renderOvPresets(); $('rosieOvPreset').value=n;
+  $('ovPresetHint').textContent=`已保存预设：${n}（下次打开默认选它）`;
+}
+async function delRosieOvPreset(){
+  const n=$('rosieOvPreset').value; if(!n)return;
+  const r=await post('/rosie_ov_delete',{name:n});
+  ROV=r.ov||ROV; renderOvPresets();
+  $('ovPresetHint').textContent=`已删除预设：${n}`;
 }
 function applyRosiePreset(){
   const p=RPRESETS[$('rosiePreset').value]; if(!p)return;
@@ -1235,7 +1425,7 @@ async function delRosiePreset(){
 }
 async function pickRosieSrc(){
   const r=await post('/pick_video');
-  if(r.path){RSRC=r.path;$('rosieSrc').textContent=RSRC;$('goRosie').disabled=false;}
+  if(r.path){RSRC=r.path;$('rosieSrc').textContent=RSRC;$('goRosie').disabled=false;ovArt();}
 }
 function rosieModeChanged(){
   const nat=$('rosieMode').value==='natural';
@@ -1613,6 +1803,34 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+        elif self.path.startswith("/asset_frame?"):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            kind = (q.get("kind") or [""])[0]
+            assets = rosie.resolve_assets()
+            path = (assets.get(kind) or {}).get("path")
+            data = video_frame_png(path, keep_alpha=True) if path else None
+            if not data:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path.startswith("/src_frame?"):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            path = (q.get("p") or [""])[0]
+            data = video_frame_png(path, keep_alpha=False) if path else None
+            if not data:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
         else:
             self.send_response(404)
             self.end_headers()
@@ -1664,6 +1882,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"presets": rosie.load_presets(),
                         "assets": rosie.resolve_assets(),
                         "sizes": rosie.load_sizes(),
+                        "ov": rosie.ov_load(),
                         "defaults": {"precomp": rosiecut.PRECOMP_PCT,
                                      "watermark": rosiecut.WATERMARK_PCT}})
         elif self.path == "/rosie_preset_save":
@@ -1687,6 +1906,27 @@ class Handler(BaseHTTPRequestHandler):
             if p:
                 rosie.save_assets_file(**{kind: p})
             self._json({"assets": rosie.resolve_assets(), "sizes": rosie.load_sizes()})
+        elif self.path == "/rosie_ov_save":
+            d = self._read()
+            name = (d.get("name") or "").strip()
+            if not name:
+                self._json({"error": "请填预设名"})
+                return
+            ov = rosie.ov_save(name, d.get("data") or {})
+            self._json({"ov": ov, "assets": rosie.resolve_assets(),
+                        "sizes": rosie.load_sizes()})
+        elif self.path == "/rosie_ov_delete":
+            self._json({"ov": rosie.ov_delete((self._read().get("name") or "").strip())})
+        elif self.path == "/rosie_ov_apply":
+            d = self._read()
+            ov = rosie.ov_load()
+            entry = ov["presets"].get((d.get("name") or "").strip())
+            if entry is None:
+                self._json({"error": "预设不存在"})
+                return
+            r = rosie.ov_apply(entry)
+            r["ov"] = ov
+            self._json(r)
         elif self.path == "/rosie_sizes":
             d = self._read()
             sz = {}

@@ -39,6 +39,10 @@ def _dir():
 
 PRESET_PATH = os.path.join(_dir(), "rosie_presets.json")
 ASSETS_PATH = os.path.join(_dir(), "rosie_assets.json")
+OVERLAY_PRESET_PATH = os.path.join(_dir(), "rosie_overlay_presets.json")
+
+# 叠加素材预设：两个素材路径 + 两个宽度百分比
+OVERLAY_KEYS = ("precomp", "watermark", "precomp_size", "watermark_size")
 
 
 # ---------- 预设 ----------
@@ -112,6 +116,83 @@ def load_sizes():
         except (TypeError, ValueError):
             pass
     return sz
+
+
+# ---------- 叠加素材预设 ----------
+# 与节拍预设分开存：那边是剪辑节奏，这边是素材本身和它在画面里的大小。
+def ov_load():
+    """返回 {"presets": {名字: {...}}, "last": 最近一次保存的名字}。"""
+    try:
+        with open(OVERLAY_PRESET_PATH) as f:
+            d = json.load(f)
+    except Exception:
+        d = {}
+    if not isinstance(d, dict):
+        d = {}
+    presets = d.get("presets")
+    if not isinstance(presets, dict):
+        presets = {}
+    last = d.get("last")
+    if last not in presets:
+        last = ""
+    return {"presets": presets, "last": last}
+
+
+def _ov_write(d):
+    os.makedirs(_dir(), exist_ok=True)
+    with open(OVERLAY_PRESET_PATH, "w") as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+
+
+def ov_save(name, data):
+    """存一份预设，并把它记为「最近一次」——下次打开默认选它。"""
+    d = ov_load()
+    entry = {}
+    for k in OVERLAY_KEYS:
+        v = data.get(k)
+        if k.endswith("_size"):
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                v = None
+            entry[k] = v if (v is not None and 1 <= v <= 100) else None
+        else:
+            entry[k] = v if isinstance(v, str) and v else None
+    d["presets"][name] = entry
+    d["last"] = name
+    _ov_write(d)
+    return d
+
+
+def ov_delete(name):
+    d = ov_load()
+    d["presets"].pop(name, None)
+    if d["last"] == name:
+        d["last"] = next(iter(d["presets"]), "")
+    _ov_write(d)
+    return d
+
+
+def ov_apply(entry):
+    """把一份预设落到当前生效的素材与尺寸上。"""
+    entry = entry or {}
+    kw = {}
+    for k in ("precomp", "watermark"):
+        if entry.get(k):
+            kw[k] = entry[k]
+    sizes = {}
+    for k, dst in (("precomp_size", "precomp"), ("watermark_size", "watermark")):
+        try:
+            v = float(entry.get(k))
+        except (TypeError, ValueError):
+            continue
+        if 1 <= v <= 100:
+            sizes[dst] = v
+    if sizes:
+        kw["sizes"] = sizes
+    if kw:
+        save_assets_file(**kw)
+    return {"assets": resolve_assets(), "sizes": load_sizes()}
 
 
 def resolve_assets():
