@@ -534,6 +534,24 @@ button.cancel:hover{background:#4a2c27}
 .dz{border:1px dashed transparent;border-radius:10px;padding:6px;margin:-6px;transition:border-color .12s,background .12s}
 .dz.over{border-color:var(--acc);background:#241a14}
 .dzhint{color:#6f7480;font-size:12px;margin-left:2px}
+/* 开关放在 .grid 里，得压过全局的 .grid label{display:block;font-size:12px} */
+.swrow{display:flex;gap:34px;align-items:center;flex-wrap:wrap;margin-top:2px}
+.swrow label.sw{display:inline-flex;align-items:center;gap:11px;margin:0;
+  cursor:pointer;user-select:none;font-size:14px;color:var(--txt)}
+.swrow label.sw>input{display:none}
+.swrow label.sw .track{flex:0 0 auto;width:46px;height:26px;border-radius:13px;
+  background:#3d3d49;position:relative;transition:background .18s;
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.45)}
+.swrow label.sw .track::after{content:"";position:absolute;top:3px;left:3px;
+  width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .18s;
+  box-shadow:0 1px 3px rgba(0,0,0,.5)}
+.swrow label.sw>input:checked+.track{background:linear-gradient(120deg,var(--acc),var(--acc2))}
+.swrow label.sw>input:checked+.track::after{transform:translateX(20px)}
+.swrow label.sw .txt2{display:flex;flex-direction:column;gap:1px}
+.swrow label.sw .lab{font-size:14px;color:var(--txt);font-weight:600;line-height:1.25}
+.swrow label.sw .sub{font-size:12px;color:var(--dim);line-height:1.3}
+.swrow label.sw.dim .lab{color:var(--dim);font-weight:400}
+.swrow label.sw.dim{cursor:not-allowed;opacity:.45}
 .ovwrap{display:flex;gap:20px;align-items:flex-start;margin-top:12px;flex-wrap:wrap}
 .ovctl{flex:1;min-width:240px}
 .ovctl label{font-size:12px;color:var(--dim);display:block;margin-bottom:3px}
@@ -646,12 +664,17 @@ border-radius:10px;display:none}
 <option value="spin">旋转模糊</option>
 <option value="none">直切</option></select></div>
 <div style="grid-column:1/4"><label>人物对齐</label>
-<div class="row">
-<label class="row" style="gap:6px;font-size:14px;color:var(--txt)">
-<input type="checkbox" id="alignOn" checked style="width:auto" onchange="alignChanged()"> 自动对齐前后图人物（比例不同/位移缩放都能对上）</label>
-<label class="row" style="gap:6px;font-size:14px;color:var(--txt)">
-<input type="checkbox" id="alignFill" checked style="width:auto" onchange="alignChanged()"> 裁到共同区域（推荐，无边缘拉丝）</label>
-</div></div>
+<div class="swrow">
+<label class="sw" id="swAlign">
+  <input type="checkbox" id="alignOn" checked onchange="alignChanged()"><span class="track"></span>
+  <span class="txt2"><span class="lab">自动对齐前后图人物</span>
+        <span class="sub">比例不同 / 位移缩放都能对上</span></span></label>
+<label class="sw" id="swFill">
+  <input type="checkbox" id="alignFill" checked onchange="alignChanged()"><span class="track"></span>
+  <span class="txt2"><span class="lab">裁到共同区域</span>
+        <span class="sub">推荐，无边缘拉丝</span></span></label>
+</div>
+<div class="hint" id="alignHint" style="margin-top:8px"></div></div>
 <div><label>对比展示方式</label><select id="slider" onchange="syncReveal()">
 <option value="sweep">滑杆·来回扫</option>
 <option value="once">滑杆·滑到底</option>
@@ -1016,6 +1039,7 @@ function renderPairs(){
     <div><img src="${thumb(pr[1])}"><div class="name" title="${esc(pr[1])}">${esc(disp(pr[1]))}</div><div class="tag">After</div></div>
     <div class="ops">
       <button class="small" onclick="swapPair(${i})">⇄ 交换前后</button>
+      <button class="small alignbtn" onclick="alignPanel(${i})">◎ 对齐</button>
       <div class="row" style="gap:6px">
         <button class="small" onclick="movePair(${i},-1)">↑</button>
         <button class="small" onclick="movePair(${i},1)">↓</button>
@@ -1026,6 +1050,8 @@ function renderPairs(){
     d.appendChild(ab);
     el.appendChild(d);
   });
+  const alignOn=$('alignOn')?$('alignOn').checked:true;
+  document.querySelectorAll('.alignbtn').forEach(b=>{b.disabled=!alignOn;});
   $('go').disabled = PAIRS.length===0 || BUSY;
   $('pairHint').textContent = PAIRS.length ?
     `${PAIRS.length} 对素材 · 成片约 ${(PAIRS.length*parseFloat($('scene_sec').value||3.6)).toFixed(1)} 秒` :
@@ -1034,6 +1060,15 @@ function renderPairs(){
 }
 let NUDGE={};
 function alignChanged(){
+  const on=$('alignOn').checked;
+  // 关掉对齐后，「裁到共同区域」和逐对微调都没有意义了，一并置灰
+  $('alignFill').disabled=!on;
+  $('swFill').classList.toggle('dim',!on);   // 只灰掉从属项；开关自己要始终可点回来
+  document.querySelectorAll('.alignbtn').forEach(b=>{b.disabled=!on;});
+  $('alignHint').textContent = on
+    ? '生成时会先把两张图的人物对到一起；逐对可点「◎ 对齐」查看并手动微调。'
+    : '已关闭：两张图按原样直接用，不做任何位移缩放，逐对微调也不生效。';
+  if(!on){document.querySelectorAll('.alignbox.on').forEach(b=>b.classList.remove('on'));return;}
   document.querySelectorAll('.alignbox.on').forEach(b=>{
     const i=parseInt(b.id.slice(2),10); loadAlign(i);});
 }
@@ -1709,6 +1744,10 @@ async function run(){
   if(!PAIRS.length)return;
   const d={pairs:PAIRS,folder:FOLDER,audio:AUDIO};
   for(const k of ['caption','caption_size','label_before','label_after','scene_sec','transition','slider','direction','comment_user','comment_text','progress_text'])d[k]=$(k).value;
+  // 对齐开关与手动微调必须一起送过去，否则后端只会走默认的「自动对齐」
+  d.align_off  = !$('alignOn').checked;
+  d.align_fill = $('alignFill').checked;
+  d.nudges     = d.align_off ? {} : NUDGE;
   const r=await post('/run',d);
   if(r.error){$('prog').textContent=r.error;return;}
   BUSY=true;$('go').disabled=true;$('bar').style.display='';$('doneRow').style.display='none';
@@ -1738,6 +1777,7 @@ async function poll(){
   if(s.audio){AUDIO=s.audio;$('audioName').textContent=base(AUDIO);$('audioName2').textContent=base(AUDIO);}
   syncReveal();
   wireDrop('B'); wireDrop('A'); paintSlot('B'); paintSlot('A');
+  alignChanged();
   Object.keys(DZ).forEach(wireZone);
   [['modePairs','pairs'],['modeScreen','screen'],['modeDemo','demo'],
    ['modeRing','ring'],['modeRosie','rosie']].forEach(([id,m])=>wireModeFallback(id,m));
