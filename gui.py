@@ -47,7 +47,8 @@ THUMB_CACHE = {}
 SETTING_KEYS = ("jy_auto", "jy_dir",
                 "caption", "caption_size", "label_before", "label_after",
                 "scene_sec", "transition", "slider", "audio", "demo_caption",
-                "comment_user", "comment_text", "progress_text", "direction")
+                "comment_user", "comment_text", "progress_text", "direction",
+                "pair_groups")
 DEFAULT_SETTINGS = {
     "jy_auto": "", "jy_dir": "",
     "caption": "", "caption_size": "55",
@@ -58,6 +59,7 @@ DEFAULT_SETTINGS = {
     "comment_text": "can u remove the matcha filter from this",
     "progress_text": "Removing filter",
     "direction": "rtl",
+    "pair_groups": "2",
 }
 
 
@@ -201,6 +203,53 @@ def save_upload(name, raw):
     with open(path, "wb") as f:
         f.write(raw)
     return path
+
+
+PAIR_PRESET_PATH = os.path.join(app_support_dir(), "pair_presets.json")
+
+# 前后对比的参数预设。存的是 ② 参数卡片里的一整套值（含两个对齐开关）。
+PAIR_PRESET_KEYS = ("caption", "caption_size", "label_before", "label_after",
+                    "scene_sec", "transition", "slider", "direction",
+                    "comment_user", "comment_text", "progress_text",
+                    "align_on", "align_fill")
+
+
+def pair_presets_load():
+    try:
+        with open(PAIR_PRESET_PATH) as f:
+            d = json.load(f)
+    except Exception:
+        d = {}
+    if not isinstance(d, dict):
+        d = {}
+    presets = d.get("presets")
+    if not isinstance(presets, dict):
+        presets = {}
+    last = d.get("last")
+    return {"presets": presets, "last": last if last in presets else ""}
+
+
+def _pair_presets_write(d):
+    os.makedirs(app_support_dir(), exist_ok=True)
+    with open(PAIR_PRESET_PATH, "w") as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+
+
+def pair_preset_save(name, params):
+    d = pair_presets_load()
+    d["presets"][name] = {k: str(params.get(k, "")) for k in PAIR_PRESET_KEYS}
+    d["last"] = name
+    _pair_presets_write(d)
+    return d
+
+
+def pair_preset_delete(name):
+    d = pair_presets_load()
+    d["presets"].pop(name, None)
+    if d["last"] == name:
+        d["last"] = next(iter(d["presets"]), "")
+    _pair_presets_write(d)
+    return d
 
 
 def load_settings():
@@ -528,6 +577,12 @@ input,select{background:#131318;color:var(--txt);border:1px solid #34343f;border
   min-height:200px;display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:10px;cursor:pointer;background:#15171b;transition:border-color .15s,background .15s}
 .drop:hover{border-color:#5a626e;background:#191c21}
+/* 组数多了就把框压矮，不然 3 组要滚半天 */
+#upGroups.compact .drop{min-height:118px;gap:5px}
+#upGroups.compact .drop .ico{font-size:24px}
+#upGroups.compact .drop .txt{font-size:12px}
+#upGroups.compact .upcol>label{margin-bottom:5px;font-size:12px}
+#upGroups.compact .uprow{gap:14px}
 .drop.over{border-color:var(--acc);background:#241a14}
 button.cancel{background:#3a2320;border:1px solid #6b3a30;color:#ffb9a6}
 button.cancel:hover{background:#4a2c27}
@@ -629,15 +684,14 @@ border-radius:10px;display:none}
 <div id="modePairs" class="mode on">
 <div class="card">
 <h2>① 上传图片</h2>
-<div class="uprow">
-<div class="upcol"><label>Before Image</label>
-<div class="drop" id="dropB" onclick="pickInto('B')"></div>
-<div class="upname" id="nameB"></div></div>
-<div class="upcol"><label>After Image</label>
-<div class="drop" id="dropA" onclick="pickInto('A')"></div>
-<div class="upname" id="nameA"></div></div>
+<div class="row" style="margin:2px 0 10px">
+<span style="font-size:12px;color:var(--dim)">同时准备</span>
+<button class="small" onclick="setGroups(GROUPS-1)" id="grpMinus">−</button>
+<span id="grpN" style="font-size:14px;font-weight:700;min-width:34px;text-align:center">2 组</span>
+<button class="small" onclick="setGroups(GROUPS+1)" id="grpPlus">＋</button>
 </div>
-<div class="hint">点框选文件，或直接把图拖进来。两边都放好会自动加成一对并清空，接着放下一对。</div>
+<div id="upGroups"></div>
+<div class="hint">点框选文件，或直接把图拖进来。某一组两边都放好，就会自动加成一对进下面的列表并清空该组。</div>
 <div class="row" style="margin-top:10px">
 <button class="small" onclick="pickFolder()">或：一次导入整个文件夹…</button>
 <button class="small" onclick="rePair()" id="repairBtn" style="display:none">重新自动配对</button>
@@ -654,6 +708,14 @@ border-radius:10px;display:none}
 
 <div class="card">
 <h2>② 参数</h2>
+<div class="row" style="margin-bottom:12px">
+<select id="pairPreset" onchange="applyPairPreset()" style="max-width:220px">
+<option value="">— 选择参数预设 —</option></select>
+<input id="pairPresetName" placeholder="预设名" style="max-width:150px">
+<button class="small" onclick="savePairPreset()">保存当前</button>
+<button class="small" onclick="delPairPreset()">删除</button>
+</div>
+<div class="hint" id="pairPresetHint" style="margin:-6px 0 12px"></div>
 <div class="grid">
 <div style="grid-column:1/3"><label>顶部字幕（留空则不加）</label><input id="caption" placeholder="the viral game face filter"></div>
 <div><label>字幕字号</label><input id="caption_size" type="number" value="55"></div>
@@ -666,7 +728,7 @@ border-radius:10px;display:none}
 <div style="grid-column:1/4"><label>人物对齐</label>
 <div class="swrow">
 <label class="sw" id="swAlign">
-  <input type="checkbox" id="alignOn" checked onchange="alignChanged()"><span class="track"></span>
+  <input type="checkbox" id="alignOn" onchange="alignChanged()"><span class="track"></span>
   <span class="txt2"><span class="lab">自动对齐前后图人物</span>
         <span class="sub">比例不同 / 位移缩放都能对上</span></span></label>
 <label class="sw" id="swFill">
@@ -1142,30 +1204,83 @@ function clickThumb(i){
 }
 function clearPairs(){PAIRS=[];SELIDX=-1;renderPairs();}
 
-let SLOT={B:'',A:''};
-function paintSlot(k){
-  const el=$(k==='B'?'dropB':'dropA'), p=SLOT[k];
-  el.innerHTML = p
-    ? `<img src="${thumb(p)}"><button class="clr" title="移除" onclick="event.stopPropagation();clearSlot('${k}')">✕</button>`
-    : `<div class="ico">🖼️</div><div class="txt">Upload photo or drag &amp; drop</div>`;
-  $(k==='B'?'nameB':'nameA').textContent = p ? disp(p) : '';
-}
-function clearSlot(k){SLOT[k]='';paintSlot(k);}
-function tryPair(){
-  if(SLOT.B&&SLOT.A){
-    PAIRS.push([SLOT.B,SLOT.A]); SLOT={B:'',A:''};
-    paintSlot('B'); paintSlot('A'); renderPairs();
+const MAX_GROUPS=6;
+let GROUPS=2, SLOTS=[{B:'',A:''},{B:'',A:''}];
+function slotId(g,k){return 'drop'+k+g;}
+function renderGroups(){
+  const el=$('upGroups'); el.innerHTML='';
+  for(let g=0;g<GROUPS;g++){
+    const tag=GROUPS>1?` <span>· 第 ${g+1} 组</span>`:'';
+    const d=document.createElement('div');
+    d.className='uprow'; if(g)d.style.marginTop='16px';
+    d.innerHTML=`
+      <div class="upcol"><label>Before Image${tag}</label>
+        <div class="drop" id="dropB${g}" onclick="pickInto(${g},'B')"></div>
+        <div class="upname" id="nameB${g}"></div></div>
+      <div class="upcol"><label>After Image${tag}</label>
+        <div class="drop" id="dropA${g}" onclick="pickInto(${g},'A')"></div>
+        <div class="upname" id="nameA${g}"></div></div>`;
+    el.appendChild(d);
   }
+  el.classList.toggle('compact', GROUPS>=3);
+  for(let g=0;g<GROUPS;g++){wireDrop(g,'B');wireDrop(g,'A');paintSlot(g,'B');paintSlot(g,'A');}
+  $('grpN').textContent=GROUPS+' 组';
+  $('grpMinus').disabled=GROUPS<=1;
+  $('grpPlus').disabled=GROUPS>=MAX_GROUPS;
 }
-async function pickInto(k){
-  if(SLOT[k])return;
-  const r=await post('/pick_image',{prompt:k==='B'?'选择 Before 图（带滤镜）':'选择 After 图（去掉滤镜）'});
-  if(r.path){SLOT[k]=r.path;paintSlot(k);tryPair();}
+function setGroups(n){
+  n=Math.max(1,Math.min(MAX_GROUPS,n|0));
+  if(n===GROUPS)return;
+  // 缩减时别把已经拖进去的图弄丢：成对的直接进列表，半边的挪去留下的空位
+  const next=[];
+  for(let g=0;g<n;g++)next.push(SLOTS[g]||{B:'',A:''});
+  if(n<GROUPS){
+    const orphans=[];
+    for(let g=n;g<GROUPS;g++){
+      const s=SLOTS[g]; if(!s)continue;
+      if(s.B&&s.A)PAIRS.push([s.B,s.A]);
+      else{ if(s.B)orphans.push(['B',s.B]); if(s.A)orphans.push(['A',s.A]); }
+    }
+    for(const [k,path] of orphans){
+      const slot=next.find(x=>!x[k]);
+      if(slot)slot[k]=path;              // 放不下就只能留在列表外，但至少不静默丢
+    }
+    renderPairs();
+  }
+  SLOTS=next; GROUPS=n;
+  renderGroups();
+  post('/save_settings',{pair_groups:String(GROUPS)});
 }
-async function uploadFile(k,file){
+function paintSlot(g,k){
+  const el=$(slotId(g,k)); if(!el)return;
+  const p=(SLOTS[g]||{})[k]||'';
+  el.innerHTML = p
+    ? `<img src="${thumb(p)}"><button class="clr" title="移除" onclick="event.stopPropagation();clearSlot(${g},'${k}')">✕</button>`
+    : `<div class="ico">🖼️</div><div class="txt">Upload photo or drag &amp; drop</div>`;
+  const nm=$('name'+k+g); if(nm)nm.textContent = p ? disp(p) : '';
+}
+function clearSlot(g,k){SLOTS[g][k]='';paintSlot(g,k);}
+function tryPair(g){
+  const s=SLOTS[g]; if(!s||!s.B||!s.A)return;
+  PAIRS.push([s.B,s.A]); SLOTS[g]={B:'',A:''};
+  paintSlot(g,'B'); paintSlot(g,'A'); renderPairs();
+}
+function firstEmptySlot(){        // 拖到面板空白处时，找第一个空位
+  for(let g=0;g<GROUPS;g++){
+    if(!SLOTS[g].B)return[g,'B'];
+    if(!SLOTS[g].A)return[g,'A'];
+  }
+  return null;
+}
+async function pickInto(g,k){
+  if(SLOTS[g][k])return;
+  const r=await post('/pick_image',{prompt:k==='B'?'选择 Before 图（变身前）':'选择 After 图（变身后）'});
+  if(r.path){SLOTS[g][k]=r.path;paintSlot(g,k);tryPair(g);}
+}
+async function uploadFile(g,k,file){
   if(!/^image\//.test(file.type||'')&&!/\.(jpe?g|png|webp|bmp|tiff?|heic)$/i.test(file.name||'')){
     $('prog').textContent='只能放图片文件';return;}
-  const el=$(k==='B'?'dropB':'dropA');
+  const el=$(slotId(g,k));
   el.innerHTML='<div class="txt">读取中…</div>';
   const buf=await file.arrayBuffer(), b=new Uint8Array(buf);
   let bin='';
@@ -1173,10 +1288,10 @@ async function uploadFile(k,file){
   const r=await post('/upload',{name:file.name,data:btoa(bin)});
   if(r.path){
     if(r.name)NAMES[r.path]=r.name;
-    SLOT[k]=r.path; paintSlot(k);
+    SLOTS[g][k]=r.path; paintSlot(g,k);
     if(!FOLDER&&r.out)$('outHint').textContent='输出: '+r.out;
-    tryPair();
-  }else{ $('prog').textContent=r.error||'上传失败'; paintSlot(k); }
+    tryPair(g);
+  }else{ $('prog').textContent=r.error||'上传失败'; paintSlot(g,k); }
 }
 // ---------- 通用拖拽上传 ----------
 // 图片走内存即可，录屏可能上 GB，一律用 XHR 流式发给 /upload_stream。
@@ -1268,8 +1383,9 @@ function wireModeFallback(modeId,mode){
     const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
     if(!f)return;
     if(mode==='pairs'){                     // 前后对比：填第一个空位
-      const k=!SLOT.B?'B':(!SLOT.A?'A':null);
-      if(k)uploadFile(k,f); else $('prog').textContent='两边都放好了，先等它自动配对';
+      const slot=firstEmptySlot();
+      if(slot)uploadFile(slot[0],slot[1],f);
+      else $('prog').textContent='所有组都放满了，先加一组或等它自动配对';
       return;
     }
     const z=MODE_FALLBACK[mode]; if(z)dzTake(z,f);
@@ -1285,14 +1401,14 @@ async function cancelRun(){
   }
 }
 
-function wireDrop(k){
-  const el=$(k==='B'?'dropB':'dropA');
-  el.addEventListener('dragover',e=>{e.preventDefault();el.classList.add('over');});
-  el.addEventListener('dragleave',()=>el.classList.remove('over'));
+function wireDrop(g,k){
+  const el=$(slotId(g,k)); if(!el)return;
+  el.addEventListener('dragover',e=>{e.preventDefault();e.stopPropagation();el.classList.add('over');});
+  el.addEventListener('dragleave',e=>{e.stopPropagation();el.classList.remove('over');});
   el.addEventListener('drop',e=>{
-    e.preventDefault(); el.classList.remove('over');
+    e.preventDefault(); e.stopPropagation(); el.classList.remove('over');
     const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
-    if(f)uploadFile(k,f);
+    if(f)uploadFile(g,k,f);
   });
 }
 async function pickFolder(){
@@ -1357,6 +1473,51 @@ async function pickRosieAsset(kind){
 function resetRosieSizes(){
   $('r_precomp_size').value=RDEFAULTS.precomp; $('r_watermark_size').value=RDEFAULTS.watermark;
   ovSync(); post('/rosie_sizes',rSizes());
+}
+
+// ---------- 前后对比：参数预设 ----------
+// 存的是 ② 参数卡片的一整套值，包含两个对齐开关。
+const PP_TEXT=['caption','caption_size','label_before','label_after','scene_sec',
+               'transition','slider','direction','comment_user','comment_text','progress_text'];
+let PPRESETS={presets:{},last:''};
+function ppData(){
+  const o={}; PP_TEXT.forEach(k=>o[k]=$(k).value);
+  o.align_on   = $('alignOn').checked   ? '1' : '';
+  o.align_fill = $('alignFill').checked ? '1' : '';
+  return o;
+}
+function renderPairPresets(){
+  const sel=$('pairPreset'), names=Object.keys(PPRESETS.presets||{});
+  const keep=sel.value;
+  sel.innerHTML='<option value="">— 选择参数预设 —</option>'+
+    names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if(names.includes(keep))sel.value=keep;
+  $('pairPresetHint').textContent = names.length
+    ? '' : '把常用的一套参数（含对齐开关）存下来，换片型时一键切回。';
+}
+function applyPairPreset(){
+  const n=$('pairPreset').value; if(!n)return;
+  const p=PPRESETS.presets[n]; if(!p)return;
+  PP_TEXT.forEach(k=>{if(p[k]!==undefined)$(k).value=p[k];});
+  if(p.align_on!==undefined)$('alignOn').checked=!!p.align_on;
+  if(p.align_fill!==undefined)$('alignFill').checked=!!p.align_fill;
+  alignChanged(); syncReveal();
+  $('pairPresetHint').textContent=`已套用：${n}`;
+}
+async function savePairPreset(){
+  const n=$('pairPresetName').value.trim();
+  if(!n){$('pairPresetHint').textContent='请先填预设名';return;}
+  const r=await post('/pair_preset_save',{name:n,params:ppData()});
+  if(r.error){$('pairPresetHint').textContent=r.error;return;}
+  PPRESETS=r; $('pairPresetName').value='';
+  renderPairPresets(); $('pairPreset').value=n;
+  $('pairPresetHint').textContent=`已保存：${n}`;
+}
+async function delPairPreset(){
+  const n=$('pairPreset').value; if(!n)return;
+  PPRESETS=await post('/pair_preset_delete',{name:n});
+  $('pairPreset').value=''; renderPairPresets();
+  $('pairPresetHint').textContent=`已删除：${n}`;
 }
 
 // ---------- 叠加素材：尺寸可视化 ----------
@@ -1745,6 +1906,7 @@ async function run(){
   const d={pairs:PAIRS,folder:FOLDER,audio:AUDIO};
   for(const k of ['caption','caption_size','label_before','label_after','scene_sec','transition','slider','direction','comment_user','comment_text','progress_text'])d[k]=$(k).value;
   // 对齐开关与手动微调必须一起送过去，否则后端只会走默认的「自动对齐」
+  d.pair_groups = String(GROUPS);   // /run 会按 SETTING_KEYS 全量写盘，不带上就被抹掉
   d.align_off  = !$('alignOn').checked;
   d.align_fill = $('alignFill').checked;
   d.nudges     = d.align_off ? {} : NUDGE;
@@ -1775,8 +1937,14 @@ async function poll(){
     if(s[k]!==undefined&&s[k]!=='')$(k).value=s[k];
   if(s.demo_caption)$('demoCaption').value=s.demo_caption;
   if(s.audio){AUDIO=s.audio;$('audioName').textContent=base(AUDIO);$('audioName2').textContent=base(AUDIO);}
+  // 上传框组数：记住上次用的，默认 2 组
+  const gn=parseInt(s.pair_groups,10);
+  GROUPS=(gn>=1&&gn<=MAX_GROUPS)?gn:2;
+  SLOTS=Array.from({length:GROUPS},()=>({B:'',A:''}));
+  PPRESETS=s.pair_presets||{presets:{},last:''};
+  renderPairPresets();
   syncReveal();
-  wireDrop('B'); wireDrop('A'); paintSlot('B'); paintSlot('A');
+  renderGroups();
   alignChanged();
   Object.keys(DZ).forEach(wireZone);
   [['modePairs','pairs'],['modeScreen','screen'],['modeDemo','demo'],
@@ -2087,7 +2255,21 @@ class Handler(BaseHTTPRequestHandler):
                 history.remove(rid, delete_file=bool(d.get("with_file")))
             self._json({"ok": True})
         elif self.path == "/settings":
-            self._json(load_settings())
+            r = load_settings()
+            r["pair_presets"] = pair_presets_load()
+            self._json(r)
+        elif self.path == "/save_settings":
+            save_settings(self._read())
+            self._json({"ok": True})
+        elif self.path == "/pair_preset_save":
+            d = self._read()
+            name = (d.get("name") or "").strip()
+            if not name:
+                self._json({"error": "请填预设名"})
+                return
+            self._json(pair_preset_save(name, d.get("params") or {}))
+        elif self.path == "/pair_preset_delete":
+            self._json(pair_preset_delete((self._read().get("name") or "").strip()))
         elif self.path == "/pick_folder":
             path = pick_folder()
             if not path:
