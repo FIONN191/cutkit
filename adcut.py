@@ -138,6 +138,61 @@ def speed_up(src, factor, out_path, log=None):
     return out_path
 
 
+# 段落之间的转场。左边是界面上显示的名字（对齐剪映的叫法），右边是 ffmpeg xfade 的类型。
+SEG_TRANSITIONS = [
+    ("none",       "无（硬切）"),
+    ("fadeblack",  "闪黑"),
+    ("fadewhite",  "闪白"),
+    ("dissolve",   "叠化"),
+    ("fade",       "淡入淡出"),
+    ("hblur",      "模糊"),
+    ("zoomin",     "放大"),
+    ("circleopen", "圆形展开"),
+    ("radial",     "径向"),
+    ("pixelize",   "像素化"),
+    ("slideleft",  "左滑"),
+    ("wipeleft",   "左擦除"),
+]
+SEG_TRANSITION_KEYS = {k for k, _ in SEG_TRANSITIONS}
+
+
+def concat_xfade(parts, out_path, kind="fadeblack", dur=0.5, log=None):
+    """带转场的拼接。用 xfade 逐个叠，转场会吃掉相邻两段各一半的重叠时间。"""
+    log = log or (lambda *_: None)
+    if kind == "none" or dur <= 0 or len(parts) < 2:
+        return concat(parts, out_path, log=log)
+
+    lens = [probe_duration(p) for p in parts]
+    # 转场不能长过任何一段，否则 xfade 会吃掉整段
+    d = min(dur, min(lens) * 0.6)
+    if d <= 0.02:
+        return concat(parts, out_path, log=log)
+    name = dict(SEG_TRANSITIONS).get(kind, kind)
+    log(f"段落转场：{name} {d:.2f}s ×{len(parts)-1} 处")
+
+    cmd = [ffmpeg_exe(), "-y", "-v", "error"]
+    for p in parts:
+        cmd += ["-i", p]
+    fc = "".join(f"[{i}:v]scale={W}:{H},setsar=1,fps={FPS},format=yuv420p[v{i}];"
+                 for i in range(len(parts)))
+    cur, running = "[v0]", lens[0]
+    for i in range(1, len(parts)):
+        off = running - d
+        tag = f"[x{i}]" if i < len(parts) - 1 else "[out]"
+        fc += (f"{cur}[v{i}]xfade=transition={kind}:duration={d:.3f}"
+               f":offset={max(0.0, off):.3f}{tag};")
+        cur = tag
+        running += lens[i] - d
+    fc = fc.rstrip(";")
+    cmd += ["-filter_complex", fc, "-map", "[out]", "-an",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-pix_fmt", "yuv420p", out_path]
+    r = run_tracked(cmd, out_path=out_path)
+    if r.returncode:
+        raise RuntimeError("转场拼接失败:\n" + r.stderr.decode("utf-8", "ignore")[-1200:])
+    return out_path
+
+
 def concat(parts, out_path, log=None):
     """顺序拼接（各段已统一到 1080x1920/30fps，可以走 concat 滤镜）。"""
     log = log or (lambda *_: None)
@@ -193,27 +248,31 @@ def mux_bgm(video, bgm, out_path, fade=0.6, log=None):
 
 # ---------- 组装 ----------
 def plan(total, n_pairs, demo_sec, ending_sec, per_beat,
-         min_scene=1.2, max_scene=4.0, min_hold=1.0, max_hold=4.5):
+         min_scene=1.2, max_scene=4.0, min_hold=1.0, max_hold=4.5,
+         xfade_sec=0.0, n_joins=0):
     """把 BGM 长度摊给各段。
 
     结尾长度固定（素材本身多长就多长），演示段长度也基本固定，
     所以可伸缩的只有「对比片段」和「结果定格」两块。
     先给定格留够结尾擦入的时间，剩下的摊给对比段并吸附到整数拍。
     """
+    # 转场会把相邻两段叠掉一段重叠时间，成片因此变短 —— 先把这部分补回预算，
+    # 不然加了转场成片就短于 BGM 了。
+    lost = xfade_sec * max(0, n_joins)
     need_hold = max(min_hold, ending_sec + 0.6)     # 结尾擦入前要能看到结果
-    budget = total - demo_sec - need_hold
+    budget = total + lost - demo_sec - need_hold
     if n_pairs <= 0 or budget <= 0:
         return None
     scene = snap_to_beat(budget / n_pairs, per_beat, min_scene, max_scene)
     pairs_sec = scene * n_pairs
-    hold = total - pairs_sec - demo_sec
+    hold = total + lost - pairs_sec - demo_sec
     if hold < min_hold:                              # 摊多了，退一拍
         if per_beat > 0 and scene - per_beat >= min_scene:
             scene -= per_beat
         else:
-            scene = max(min_scene, (total - demo_sec - min_hold) / n_pairs)
+            scene = max(min_scene, (total + lost - demo_sec - min_hold) / n_pairs)
         pairs_sec = scene * n_pairs
-        hold = total - pairs_sec - demo_sec
+        hold = total + lost - pairs_sec - demo_sec
     # 素材少而 BGM 长时，富余会全堆给定格 —— 与其让结果图干放十几秒，
     # 不如把成片收在自然长度、把 BGM 裁短。
     trimmed = False
@@ -221,16 +280,17 @@ def plan(total, n_pairs, demo_sec, ending_sec, per_beat,
     if hold > max(max_hold, ending_sec + 0.6):
         hold = max(max_hold, ending_sec + 0.6)
         trimmed = True
-    out_total = pairs_sec + demo_sec + hold
+    out_total = pairs_sec + demo_sec + hold - lost   # 转场叠掉的部分
     return {"scene": scene, "pairs": pairs_sec, "demo": demo_sec,
             "hold": hold, "ending_at": max(0.0, out_total - ending_sec),
-            "total": out_total, "trimmed": trimmed}
+            "total": out_total, "trimmed": trimmed, "xfade_lost": lost}
 
 
 def build(pairs, demo_photo, demo_result, ending, bgm, out_path,
           caption="", label_before="Before", label_after="After",
           demo_speed=2.0, transition="spin", slider="sweep", direction="rtl",
           align_mode="off", align_fill=True,
+          seg_transition="fadeblack", seg_transition_sec=0.5,
           log=None, progress=None, tmp_dir=None):
     """产出一条成片。返回输出路径。"""
     log = log or (lambda *_: None)
@@ -257,7 +317,10 @@ def build(pairs, demo_photo, demo_result, ending, bgm, out_path,
         demo_fast = speed_up(demo_raw, demo_speed, os.path.join(tmp, "demo.mp4"), log=log)
         demo_sec = probe_duration(demo_fast)
 
-        p = plan(total, len(pairs), demo_sec, ending_sec, per_beat)
+        n_joins = 2                       # 对比段→演示、演示→定格
+        xf = seg_transition_sec if seg_transition != "none" else 0.0
+        p = plan(total, len(pairs), demo_sec, ending_sec, per_beat,
+                 xfade_sec=xf, n_joins=n_joins)
         if p is None:
             raise RuntimeError("BGM 太短，装不下这些段落")
         log(f"分配：每对 {p['scene']:.2f}s ×{len(pairs)} = {p['pairs']:.2f}s"
@@ -281,8 +344,9 @@ def build(pairs, demo_photo, demo_result, ending, bgm, out_path,
                               os.path.join(tmp, "hold.mp4"), label=label_after, log=log)
 
         check_cancel()
-        body = concat([pairs_mp4, demo_fast, hold_mp4],
-                      os.path.join(tmp, "body.mp4"), log=log)
+        body = concat_xfade([pairs_mp4, demo_fast, hold_mp4],
+                            os.path.join(tmp, "body.mp4"),
+                            kind=seg_transition, dur=seg_transition_sec, log=log)
         if ending:
             body = overlay_ending(body, ending, p["ending_at"],
                                   os.path.join(tmp, "withend.mp4"), log=log)
@@ -308,9 +372,14 @@ def main(argv=None):
     ap.add_argument("--caption", default="")
     ap.add_argument("--speed", type=float, default=2.0)
     ap.add_argument("--slider", default="sweep")
+    ap.add_argument("--seg-transition", default="fadeblack",
+                    help="段落之间的转场：" + " / ".join(k for k, _ in SEG_TRANSITIONS))
+    ap.add_argument("--seg-transition-sec", type=float, default=0.5)
     ap.add_argument("-o", "--out", required=True)
     a = ap.parse_args(argv)
     build([tuple(p) for p in a.pair], a.photo, a.result, a.ending, a.bgm, a.out,
-          caption=a.caption, demo_speed=a.speed, slider=a.slider, log=print)
+          caption=a.caption, demo_speed=a.speed, slider=a.slider,
+          seg_transition=a.seg_transition, seg_transition_sec=a.seg_transition_sec,
+          log=print)
     print("OK", a.out)
     return 0

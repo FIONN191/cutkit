@@ -426,6 +426,9 @@ def worker_ad(opts):
             opts["bgm"], opts["out"], caption=opts["caption"],
             label_before=opts["label_before"], label_after=opts["label_after"],
             demo_speed=opts["speed"], slider=opts["slider"],
+            transition=opts["transition"],
+            seg_transition=opts["seg_transition"],
+            seg_transition_sec=opts["seg_transition_sec"],
             log=log, progress=prog)
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, out=out)
@@ -1127,7 +1130,26 @@ border-radius:10px;display:none}
 <div><label>对比展示方式</label><select id="ad_slider">
 <option value="sweep">滑杆·来回扫</option><option value="push">滑杆·滑到底</option>
 <option value="wipe">硬擦除</option></select></div>
+<div><label>对比片段之间</label><select id="ad_transition">
+<option value="spin">旋转模糊</option><option value="none">直切</option></select></div>
+<div><label>段落之间的转场</label><select id="ad_seg_trans" onchange="adSegTransChanged()">
+<option value="none">无（硬切）</option>
+<option value="fadeblack" selected>闪黑</option>
+<option value="fadewhite">闪白</option>
+<option value="dissolve">叠化</option>
+<option value="fade">淡入淡出</option>
+<option value="hblur">模糊</option>
+<option value="zoomin">放大</option>
+<option value="circleopen">圆形展开</option>
+<option value="radial">径向</option>
+<option value="pixelize">像素化</option>
+<option value="slideleft">左滑</option>
+<option value="wipeleft">左擦除</option></select></div>
+<div><label>转场时长 <span id="ad_seg_secL">0.50</span> 秒</label>
+<input type="range" id="ad_seg_sec" min="0.1" max="1.5" step="0.05" value="0.5"
+       oninput="adSegTransChanged()" style="width:100%"></div>
 </div>
+<div class="hint" id="adSegHint" style="margin-top:6px"></div>
 <div class="dz" id="zAdEnding" style="margin-top:12px">
 <div class="row"><button class="small" onclick="pickAdEnding()">选品牌结尾 MOV…</button>
 <button class="small" onclick="clearAdEnding()">清除</button>
@@ -1640,6 +1662,14 @@ function wireAdDrop(g,k){
     const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
     if(f)adUpload(g,k,f);});
 }
+function adSegTransChanged(){
+  const on = $('ad_seg_trans').value !== 'none';
+  $('ad_seg_sec').disabled = !on;
+  $('ad_seg_secL').textContent = parseFloat($('ad_seg_sec').value).toFixed(2);
+  $('adSegHint').textContent = on
+    ? '转场加在「对比段 → 演示」和「演示 → 定格」两处；成片总长会自动补偿，仍然贴合 BGM。'
+    : '段落之间直接硬切。';
+}
 function adPairs(){return AD_SLOTS.filter(s=>s.B&&s.A).map(s=>[s.B,s.A]);}
 function adSyncReady(){
   const ok = adPairs().length>0 && ADPHOTO && ADBGM;
@@ -1669,6 +1699,9 @@ async function runAd(){
   const r=await post('/run_ad',{pairs:pairs,photo:ADPHOTO,result:ADRESULT,
     ending:ADENDING,bgm:ADBGM,caption:$('ad_caption').value,
     speed:$('ad_speed').value,slider:$('ad_slider').value,
+    transition:$('ad_transition').value,
+    seg_transition:$('ad_seg_trans').value,
+    seg_transition_sec:$('ad_seg_sec').value,
     label_before:$('ad_label_before').value,label_after:$('ad_label_after').value});
   if(r.error){$('progAd').textContent=r.error;return;}
   BUSY=true;$('goAd').disabled=true;$('doneRowAd').style.display='none';
@@ -1941,7 +1974,7 @@ function setMode(m){
   document.getElementById('tabRosie').classList.toggle('on',m==='rosie');
   document.getElementById('modeAd').classList.toggle('on',m==='ad');
   document.getElementById('tabAd').classList.toggle('on',m==='ad');
-  if(m==='ad')renderAdGroups();
+  if(m==='ad'){renderAdGroups();adSegTransChanged();}
 }
 const REVEAL_HINT={
   sweep:'滑杆左右来回扫动 —— 前三条用的就是这个。',
@@ -2815,8 +2848,18 @@ class Handler(BaseHTTPRequestHandler):
                 folder = uploads_out_folder()
             out = os.path.join(folder, os.path.splitext(os.path.basename(photo))[0]
                                + "-广告成片.mp4")
+            seg = d.get("seg_transition") or "fadeblack"
+            if seg not in adcut.SEG_TRANSITION_KEYS:
+                seg = "fadeblack"
+            try:
+                seg_sec = float(d.get("seg_transition_sec") or 0.5)
+            except ValueError:
+                seg_sec = 0.5
             opts = dict(pairs=pairs, photo=photo, result=result or None,
                         ending=ending or None, bgm=bgm, out=out,
+                        transition=d.get("transition") or "spin",
+                        seg_transition=seg,
+                        seg_transition_sec=max(0.1, min(1.5, seg_sec)),
                         caption=(d.get("caption") or "").strip(),
                         label_before=(d.get("label_before") or "Before").strip(),
                         label_after=(d.get("label_after") or "After").strip(),
