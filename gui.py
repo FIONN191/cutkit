@@ -26,6 +26,7 @@ import history
 import rosie
 import rosiecut
 import ringarrow
+import adcut
 
 STATE = {
     "lines": [],
@@ -415,6 +416,30 @@ def worker_rosie(src, params, mode, overlay, sizes):
             STATE.update(busy=False, done=True, ok=False)
 
 
+def worker_ad(opts):
+    try:
+        def prog(d, t):
+            with LOCK:
+                STATE["prog_done"], STATE["prog_total"] = d, t
+        out = adcut.build(
+            opts["pairs"], opts["photo"], opts["result"], opts["ending"],
+            opts["bgm"], opts["out"], caption=opts["caption"],
+            label_before=opts["label_before"], label_after=opts["label_after"],
+            demo_speed=opts["speed"], slider=opts["slider"],
+            log=log, progress=prog)
+        with LOCK:
+            STATE.update(busy=False, done=True, ok=True, out=out)
+        _record(out, "ad")
+    except render.Cancelled:
+        log("已取消 ⏹")
+        with LOCK:
+            STATE.update(busy=False, done=True, ok=False, cancelled=True)
+    except Exception:
+        log("出错了:\n" + traceback.format_exc(limit=8))
+        with LOCK:
+            STATE.update(busy=False, done=True, ok=False)
+
+
 def worker(pairs, opts):
     try:
         def prog(d, t):
@@ -578,11 +603,11 @@ input,select{background:#131318;color:var(--txt);border:1px solid #34343f;border
   gap:10px;cursor:pointer;background:#15171b;transition:border-color .15s,background .15s}
 .drop:hover{border-color:#5a626e;background:#191c21}
 /* 组数多了就把框压矮，不然 3 组要滚半天 */
-#upGroups.compact .drop{min-height:118px;gap:5px}
-#upGroups.compact .drop .ico{font-size:24px}
-#upGroups.compact .drop .txt{font-size:12px}
-#upGroups.compact .upcol>label{margin-bottom:5px;font-size:12px}
-#upGroups.compact .uprow{gap:14px}
+.compact .drop{min-height:118px;gap:5px}
+.compact .drop .ico{font-size:24px}
+.compact .drop .txt{font-size:12px}
+.compact .upcol>label{margin-bottom:5px;font-size:12px}
+.compact .uprow{gap:14px}
 .drop.over{border-color:var(--acc);background:#241a14}
 button.cancel{background:#3a2320;border:1px solid #6b3a30;color:#ffb9a6}
 button.cancel:hover{background:#4a2c27}
@@ -678,6 +703,7 @@ border-radius:10px;display:none}
 <button id="tabDemo" onclick="setMode('demo')">拖照片演示</button>
 <button id="tabRing" onclick="setMode('ring')">圆环箭头</button>
 <button id="tabRosie" onclick="setMode('rosie')">录屏自动剪辑</button>
+<button id="tabAd" onclick="setMode('ad')">广告成片</button>
 <button id="tabHist" onclick="setMode('hist')">历史记录</button>
 </div>
 
@@ -1060,6 +1086,78 @@ border-radius:10px;display:none}
 </div>
 </div><!-- /modeRosie -->
 
+<div id="modeAd" class="mode">
+<div class="card">
+<h2>① 前后对比素材</h2>
+<div class="row" style="margin:2px 0 10px">
+<span style="font-size:12px;color:var(--dim)">同时准备</span>
+<button class="small" onclick="setAdGroups(AD_GROUPS-1)" id="adGrpMinus">−</button>
+<span id="adGrpN" style="font-size:14px;font-weight:700;min-width:34px;text-align:center">2 组</span>
+<button class="small" onclick="setAdGroups(AD_GROUPS+1)" id="adGrpPlus">＋</button>
+</div>
+<div id="adGroups"></div>
+<div class="hint">每组放一对前后图。组数越多，成片里对比段就越多、每段越短。</div>
+</div>
+
+<div class="card">
+<h2>② 拖照片演示</h2>
+<div class="dz" id="zAdPhoto">
+<div class="row"><button onclick="pickAdPhoto()">选原图…</button>
+<div class="folder" id="adPhoto"></div></div>
+<div class="dzhint">或把原图直接拖到这里</div>
+</div>
+<div class="dz" id="zAdResult" style="margin-top:10px">
+<div class="row"><button onclick="pickAdResult()">选 AI 结果图…</button>
+<button class="small" onclick="clearAdResult()">清除</button>
+<div class="folder" id="adResult"></div></div>
+<div class="dzhint">或把结果图直接拖到这里 —— 它也是结尾定格用的那张</div>
+</div>
+</div>
+
+<div class="card">
+<h2>③ 文案与素材</h2>
+<div class="grid">
+<div style="grid-column:1/3"><label>顶部字幕（自动折行，支持 emoji）</label>
+<input id="ad_caption" value="POV: one selfie later, you debuted as an idol 💀✨"></div>
+<div><label>演示段加速</label><select id="ad_speed">
+<option value="2">2×（推荐）</option><option value="1.5">1.5×</option>
+<option value="1">原速</option><option value="3">3×</option></select></div>
+<div><label>Before 标签</label><input id="ad_label_before" value="Before"></div>
+<div><label>After 标签</label><input id="ad_label_after" value="After"></div>
+<div><label>对比展示方式</label><select id="ad_slider">
+<option value="sweep">滑杆·来回扫</option><option value="push">滑杆·滑到底</option>
+<option value="wipe">硬擦除</option></select></div>
+</div>
+<div class="dz" id="zAdEnding" style="margin-top:12px">
+<div class="row"><button class="small" onclick="pickAdEnding()">选品牌结尾 MOV…</button>
+<button class="small" onclick="clearAdEnding()">清除</button>
+<div class="folder" id="adEnding"></div></div>
+<div class="dzhint">带 alpha 的结尾素材，会叠在结果定格上擦入；留空则不加结尾</div>
+</div>
+<div class="dz" id="zAdBgm" style="margin-top:10px">
+<div class="row"><button class="small" onclick="pickAdBgm()">选 BGM…</button>
+<button class="small" onclick="clearAdBgm()">清除</button>
+<div class="folder" id="adBgm"></div></div>
+<div class="dzhint">必填 —— 成片总长跟着它走，切点会吸附到它的节拍</div>
+</div>
+</div>
+
+<div class="card">
+<h2>④ 生成</h2>
+<div class="row">
+<button class="primary" id="goAd" onclick="runAd()" disabled>生成广告成片</button>
+<button class="cancel" id="cancel_goAd" onclick="cancelRun()" style="display:none">取消生成</button>
+<div class="hint" id="outHintAd"></div>
+</div>
+<div id="barAd" style="display:none;height:10px;background:#26262f;border-radius:5px;overflow:hidden;margin:10px 0 6px"><i id="fillAd" style="display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .2s"></i></div>
+<div class="hint" id="progAd"></div>
+<div id="doneRowAd" class="row" style="display:none;gap:10px;margin-top:10px">
+<button onclick="post('/reveal')">在 Finder 中显示</button>
+</div>
+<div id="logAd" style="white-space:pre-wrap;font:12px/1.6 ui-monospace,Menlo,monospace;color:var(--dim);max-height:190px;overflow-y:auto;margin-top:8px"></div>
+</div>
+</div><!-- /modeAd -->
+
 <div id="modeHist" class="mode">
 <div class="card">
 <h2>① 剪映素材夹</h2>
@@ -1338,6 +1436,14 @@ const DZ={
   zBgm1:       {kind:'audio', status:'prog',
                 apply:p=>{AUDIO=p;$('audioName').textContent=base(p);
                           $('audioName2').textContent=base(p);}},
+  zAdPhoto:    {kind:'image', status:'progAd',
+                apply:p=>{ADPHOTO=p;$('adPhoto').textContent=base(p);adSyncReady();}},
+  zAdResult:   {kind:'image', status:'progAd',
+                apply:p=>{ADRESULT=p;$('adResult').textContent=base(p);adSyncReady();}},
+  zAdEnding:   {kind:'video', status:'progAd',
+                apply:p=>{ADENDING=p;$('adEnding').textContent=base(p);}},
+  zAdBgm:      {kind:'audio', status:'progAd',
+                apply:p=>{ADBGM=p;$('adBgm').textContent=base(p);adSyncReady();}},
   zBgm2:       {kind:'audio', status:'prog2',
                 apply:p=>{AUDIO=p;$('audioName').textContent=base(p);
                           $('audioName2').textContent=base(p);}},
@@ -1374,7 +1480,7 @@ function wireZone(zid){
 }
 
 // 兜底：拖到该模式面板的任何空白处，也送到这个模式的主输入
-const MODE_FALLBACK={screen:'zVideo',demo:'zDemoPhoto',ring:'zRing',rosie:'zRosie'};
+const MODE_FALLBACK={screen:'zVideo',demo:'zDemoPhoto',ring:'zRing',rosie:'zRosie',ad:'zAdPhoto'};
 function wireModeFallback(modeId,mode){
   const el=$(modeId); if(!el)return;
   el.addEventListener('dragover',e=>{e.preventDefault();});
@@ -1473,6 +1579,116 @@ async function pickRosieAsset(kind){
 function resetRosieSizes(){
   $('r_precomp_size').value=RDEFAULTS.precomp; $('r_watermark_size').value=RDEFAULTS.watermark;
   ovSync(); post('/rosie_sizes',rSizes());
+}
+
+// ---------- 广告成片 ----------
+let AD_GROUPS=2, AD_SLOTS=[{B:'',A:''},{B:'',A:''}];
+let ADPHOTO='', ADRESULT='', ADENDING='', ADBGM='';
+function adSlotId(g,k){return 'adDrop'+k+g;}
+function renderAdGroups(){
+  const el=$('adGroups'); if(!el)return;
+  el.innerHTML='';
+  for(let g=0;g<AD_GROUPS;g++){
+    const d=document.createElement('div');
+    d.className='uprow'; if(g)d.style.marginTop='14px';
+    d.innerHTML=`
+      <div class="upcol"><label>Before <span>· 第 ${g+1} 组</span></label>
+        <div class="drop" id="adDropB${g}" onclick="pickAdInto(${g},'B')"></div>
+        <div class="upname" id="adNameB${g}"></div></div>
+      <div class="upcol"><label>After <span>· 第 ${g+1} 组</span></label>
+        <div class="drop" id="adDropA${g}" onclick="pickAdInto(${g},'A')"></div>
+        <div class="upname" id="adNameA${g}"></div></div>`;
+    el.appendChild(d);
+  }
+  el.classList.add('compact');       // 这个模式里始终用紧凑框，卡片本来就长
+  for(let g=0;g<AD_GROUPS;g++){wireAdDrop(g,'B');wireAdDrop(g,'A');paintAdSlot(g,'B');paintAdSlot(g,'A');}
+  $('adGrpN').textContent=AD_GROUPS+' 组';
+  $('adGrpMinus').disabled=AD_GROUPS<=1; $('adGrpPlus').disabled=AD_GROUPS>=6;
+  adSyncReady();
+}
+function setAdGroups(n){
+  n=Math.max(1,Math.min(6,n|0)); if(n===AD_GROUPS)return;
+  const next=[];
+  for(let g=0;g<n;g++)next.push(AD_SLOTS[g]||{B:'',A:''});
+  AD_SLOTS=next; AD_GROUPS=n; renderAdGroups();
+}
+function paintAdSlot(g,k){
+  const el=$(adSlotId(g,k)); if(!el)return;
+  const p=(AD_SLOTS[g]||{})[k]||'';
+  el.innerHTML = p
+    ? `<img src="${thumb(p)}"><button class="clr" title="移除" onclick="event.stopPropagation();clearAdSlot(${g},'${k}')">✕</button>`
+    : `<div class="ico">🖼️</div><div class="txt">Upload photo or drag &amp; drop</div>`;
+  const nm=$('adName'+k+g); if(nm)nm.textContent = p ? disp(p) : '';
+}
+function clearAdSlot(g,k){AD_SLOTS[g][k]='';paintAdSlot(g,k);adSyncReady();}
+async function pickAdInto(g,k){
+  if(AD_SLOTS[g][k])return;
+  const r=await post('/pick_image',{prompt:k==='B'?'选择 Before 图':'选择 After 图'});
+  if(r.path){AD_SLOTS[g][k]=r.path;paintAdSlot(g,k);adSyncReady();}
+}
+async function adUpload(g,k,file){
+  const el=$(adSlotId(g,k)); el.innerHTML='<div class="txt">读取中…</div>';
+  const r=await uploadStream(file,'image');
+  if(r.path){AD_SLOTS[g][k]=r.path;paintAdSlot(g,k);adSyncReady();}
+  else{$('progAd').textContent=r.error||'上传失败';paintAdSlot(g,k);}
+}
+function wireAdDrop(g,k){
+  const el=$(adSlotId(g,k)); if(!el)return;
+  el.addEventListener('dragover',e=>{e.preventDefault();e.stopPropagation();el.classList.add('over');});
+  el.addEventListener('dragleave',e=>{e.stopPropagation();el.classList.remove('over');});
+  el.addEventListener('drop',e=>{e.preventDefault();e.stopPropagation();el.classList.remove('over');
+    const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+    if(f)adUpload(g,k,f);});
+}
+function adPairs(){return AD_SLOTS.filter(s=>s.B&&s.A).map(s=>[s.B,s.A]);}
+function adSyncReady(){
+  const ok = adPairs().length>0 && ADPHOTO && ADBGM;
+  const b=$('goAd'); if(b)b.disabled=!ok;
+  const h=$('progAd');
+  if(h&&!BUSY){
+    const miss=[];
+    if(!adPairs().length)miss.push('至少一组完整的前后图');
+    if(!ADPHOTO)miss.push('演示原图');
+    if(!ADBGM)miss.push('BGM');
+    h.textContent = miss.length ? '还缺：'+miss.join('、') : '';
+  }
+}
+async function pickAdPhoto(){const r=await post('/pick_image',{prompt:'选择演示原图'});
+  if(r.path){ADPHOTO=r.path;$('adPhoto').textContent=base(r.path);adSyncReady();}}
+async function pickAdResult(){const r=await post('/pick_image',{prompt:'选择 AI 结果图'});
+  if(r.path){ADRESULT=r.path;$('adResult').textContent=base(r.path);adSyncReady();}}
+function clearAdResult(){ADRESULT='';$('adResult').textContent='';adSyncReady();}
+async function pickAdEnding(){const r=await post('/pick_video');
+  if(r.path){ADENDING=r.path;$('adEnding').textContent=base(r.path);}}
+function clearAdEnding(){ADENDING='';$('adEnding').textContent='';}
+async function pickAdBgm(){const r=await post('/pick_audio');
+  if(r.path){ADBGM=r.path;$('adBgm').textContent=base(r.path);adSyncReady();}}
+function clearAdBgm(){ADBGM='';$('adBgm').textContent='';adSyncReady();}
+async function runAd(){
+  const pairs=adPairs(); if(!pairs.length||!ADPHOTO||!ADBGM)return;
+  const r=await post('/run_ad',{pairs:pairs,photo:ADPHOTO,result:ADRESULT,
+    ending:ADENDING,bgm:ADBGM,caption:$('ad_caption').value,
+    speed:$('ad_speed').value,slider:$('ad_slider').value,
+    label_before:$('ad_label_before').value,label_after:$('ad_label_after').value});
+  if(r.error){$('progAd').textContent=r.error;return;}
+  BUSY=true;$('goAd').disabled=true;$('doneRowAd').style.display='none';
+  $('logAd').textContent='';$('progAd').textContent='组装中…';
+  $('barAd').style.display='';$('fillAd').style.width='0%';
+  $('outHintAd').textContent='输出: '+(r.out||'');
+  POLL=setInterval(pollAd,500);
+}
+async function pollAd(){
+  const s=await post('/status');
+  if(s.total>0){$('fillAd').style.width=(100*s.done_n/s.total).toFixed(1)+'%';
+    $('progAd').textContent=`渲染中 ${s.done_n}/${s.total} 帧`;}
+  $('logAd').textContent=s.lines.join('\n');
+  $('logAd').scrollTop=$('logAd').scrollHeight;
+  if(s.done){
+    clearInterval(POLL);BUSY=false;$('goAd').disabled=false;
+    if(s.ok){$('progAd').textContent='完成 ✅  '+s.out;$('fillAd').style.width='100%';
+      $('doneRowAd').style.display='flex';}
+    else{$('progAd').textContent=s.cancelled?'已取消 ⏹':'失败 ❌（见下方日志）';}
+  }
 }
 
 // ---------- 前后对比：参数预设 ----------
@@ -1723,6 +1939,9 @@ function setMode(m){
   document.getElementById('tabHist').classList.toggle('on',m==='hist');
   document.getElementById('modeRosie').classList.toggle('on',m==='rosie');
   document.getElementById('tabRosie').classList.toggle('on',m==='rosie');
+  document.getElementById('modeAd').classList.toggle('on',m==='ad');
+  document.getElementById('tabAd').classList.toggle('on',m==='ad');
+  if(m==='ad')renderAdGroups();
 }
 const REVEAL_HINT={
   sweep:'滑杆左右来回扫动 —— 前三条用的就是这个。',
@@ -1948,7 +2167,7 @@ async function poll(){
   alignChanged();
   Object.keys(DZ).forEach(wireZone);
   [['modePairs','pairs'],['modeScreen','screen'],['modeDemo','demo'],
-   ['modeRing','ring'],['modeRosie','rosie']].forEach(([id,m])=>wireModeFallback(id,m));
+   ['modeRing','ring'],['modeRosie','rosie'],['modeAd','ad']].forEach(([id,m])=>wireModeFallback(id,m));
   // 拖到窗口其它地方不要让 webview 直接打开文件
   ['dragover','drop'].forEach(ev=>document.addEventListener(ev,e=>e.preventDefault()));
   // 只在真的有任务在跑时露出取消按钮（非活动模式的按钮本来就不可见）
@@ -2568,6 +2787,50 @@ class Handler(BaseHTTPRequestHandler):
             save_settings({k: str(d.get(k, "")) for k in SETTING_KEYS})
             threading.Thread(target=worker, args=(pairs, opts), daemon=True).start()
             self._json({"ok": True})
+        elif self.path == "/run_ad":
+            d = self._read()
+            pairs = [tuple(p) for p in d.get("pairs") or []
+                     if isinstance(p, (list, tuple)) and len(p) == 2
+                     and all(isinstance(x, str) and os.path.isfile(x) for x in p)]
+            photo = (d.get("photo") or "").strip()
+            bgm = (d.get("bgm") or "").strip()
+            if not pairs:
+                self._json({"error": "至少要有一组完整的前后图"})
+                return
+            for label, path in (("演示原图", photo), ("BGM", bgm)):
+                if not path or not os.path.isfile(path):
+                    self._json({"error": f"{label}不存在"})
+                    return
+            ending = (d.get("ending") or "").strip()
+            if ending and not os.path.isfile(ending):
+                self._json({"error": "结尾素材不存在"})
+                return
+            result = (d.get("result") or "").strip()
+            try:
+                speed = float(d.get("speed") or 2)
+            except ValueError:
+                speed = 2.0
+            folder = os.path.dirname(photo)
+            if os.path.normpath(folder).startswith(os.path.normpath(UPLOAD_DIR)):
+                folder = uploads_out_folder()
+            out = os.path.join(folder, os.path.splitext(os.path.basename(photo))[0]
+                               + "-广告成片.mp4")
+            opts = dict(pairs=pairs, photo=photo, result=result or None,
+                        ending=ending or None, bgm=bgm, out=out,
+                        caption=(d.get("caption") or "").strip(),
+                        label_before=(d.get("label_before") or "Before").strip(),
+                        label_after=(d.get("label_after") or "After").strip(),
+                        speed=max(1.0, min(4.0, speed)),
+                        slider=d.get("slider") or "sweep")
+            with LOCK:
+                if STATE["busy"]:
+                    self._json({"error": "正在渲染中"})
+                    return
+                render.clear_cancel()
+                STATE.update(busy=True, done=False, ok=False, cancelled=False,
+                             out=None, kind="ad", prog_done=0, prog_total=0, lines=[])
+            threading.Thread(target=worker_ad, args=(opts,), daemon=True).start()
+            self._json({"ok": True, "out": out})
         elif self.path == "/status":
             with LOCK:
                 p = STATE["plan"]
@@ -2640,6 +2903,9 @@ def main():
         sys.argv = [sys.argv[0]] + argv
         rosiecut.main()
         return
+    if "--cli-ad" in sys.argv:
+        argv = [a for a in sys.argv[1:] if a != "--cli-ad"]
+        sys.exit(adcut.main(argv))
     if "--cli-ring" in sys.argv:
         argv = [a for a in sys.argv[1:] if a != "--cli-ring"]
         sys.exit(ringarrow.main(argv))

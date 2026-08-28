@@ -165,6 +165,94 @@ def _font(size, weight="medium", text=""):
     return ImageFont.load_default()
 
 
+# ---------- emoji 混排 ----------
+# Apple 彩色 emoji 是位图字体，只认固定档位（48/96 行，55/137 报 invalid pixel size），
+# 所以按档位渲染再缩放，和文字一起排。
+_EMOJI_FONT = "/System/Library/Fonts/Apple Color Emoji.ttc"
+_EMOJI_STRIKE = 96
+_emoji_cache = {}
+
+
+def _is_emoji(ch):
+    o = ord(ch)
+    return (0x1F000 <= o <= 0x1FAFF or 0x2600 <= o <= 0x27BF
+            or 0x2B00 <= o <= 0x2BFF or 0x1F1E6 <= o <= 0x1F1FF
+            or o in (0xFE0F, 0x200D, 0x20E3))
+
+
+def _runs(s):
+    """切成 (是否 emoji, 片段) 序列。"""
+    out = []
+    for ch in s or "":
+        e = _is_emoji(ch)
+        if out and out[-1][0] == e:
+            out[-1][1] += ch
+        else:
+            out.append([e, ch])
+    return [(e, t) for e, t in out]
+
+
+def _emoji_img(text, px):
+    """把一段 emoji 渲染成高 px 的 RGBA 图；没有 emoji 字体就返回 None。"""
+    key = (text, px)
+    if key in _emoji_cache:
+        return _emoji_cache[key]
+    if not os.path.exists(_EMOJI_FONT):
+        return None
+    try:
+        f = ImageFont.truetype(_EMOJI_FONT, _EMOJI_STRIKE)
+        pad = _EMOJI_STRIKE // 2
+        big = Image.new("RGBA", (_EMOJI_STRIKE * (len(text) + 2), _EMOJI_STRIKE * 2),
+                        (0, 0, 0, 0))
+        ImageDraw.Draw(big).text((pad, pad), text, font=f, embedded_color=True)
+        bb = big.getbbox()
+        if not bb:
+            return None
+        cut = big.crop(bb)
+        w = max(1, round(cut.width * px / cut.height))
+        img = cut.resize((w, px), Image.LANCZOS)
+    except Exception:
+        img = None
+    _emoji_cache[key] = img
+    return img
+
+
+def _mixed_width(draw, s, font):
+    """文字 + emoji 混排的总宽度。"""
+    px = max(8, int(font.size * 1.05))
+    w = 0
+    for is_e, t in _runs(s):
+        if is_e:
+            im = _emoji_img(t, px)
+            w += im.width + 2 if im else draw.textbbox((0, 0), t, font=font)[2]
+        else:
+            w += draw.textbbox((0, 0), t, font=font)[2]
+    return w
+
+
+def _draw_mixed(img, xy, s, font, anchor="mm", fill=(255, 255, 255, 255)):
+    """在 img 上画一行文字，emoji 用彩色位图贴上去。anchor 只用 mm / la。"""
+    d = ImageDraw.Draw(img, "RGBA")
+    if not any(e for e, _ in _runs(s)):
+        _text_shadow(d, xy, s, font, anchor=anchor, fill=fill)
+        return
+    px = max(8, int(font.size * 1.05))
+    total = _mixed_width(d, s, font)
+    x, y = xy
+    if anchor == "mm":
+        x -= total // 2
+    for is_e, t in _runs(s):
+        if is_e:
+            em = _emoji_img(t, px)
+            if em is not None:
+                img.paste(em, (int(x), int(y - px // 2)), em)
+                x += em.width + 2
+                continue
+        d.text((x + 2, y + 3), t, font=font, fill=(0, 0, 0, 110), anchor="lm")
+        d.text((x, y), t, font=font, fill=fill, anchor="lm")
+        x += d.textbbox((0, 0), t, font=font)[2]
+
+
 def _text_shadow(draw, xy, s, font, anchor="la", fill=(255, 255, 255, 255)):
     x, y = xy
     draw.text((x + 2, y + 3), s, font=font, fill=(0, 0, 0, 110), anchor=anchor)
@@ -647,11 +735,48 @@ class Renderer:
             acc = s if acc is None else Image.blend(acc, s, 1.0 / (i + 1))
         return acc
 
+    def _wrap_caption(self, draw, text, max_w):
+        """按画面宽度折行。英文按词断，断不开的长串（含中日文）按字断。"""
+        def width(s):
+            return _mixed_width(draw, s, self.f_caption)
+
+        lines, cur = [], ""
+        for word in text.split(" "):
+            trial = (cur + " " + word).strip()
+            if not cur or width(trial) <= max_w:
+                cur = trial
+                continue
+            lines.append(cur)
+            cur = word
+        if cur:
+            lines.append(cur)
+
+        out = []
+        for ln in lines:                      # 单个"词"本身就超宽时逐字断
+            if width(ln) <= max_w or len(ln) <= 1:
+                out.append(ln)
+                continue
+            buf = ""
+            for ch in ln:
+                if buf and width(buf + ch) > max_w:
+                    out.append(buf)
+                    buf = ch
+                else:
+                    buf += ch
+            if buf:
+                out.append(buf)
+        return out
+
     def _draw_caption(self, frame):
-        if self.caption:
-            d = ImageDraw.Draw(frame, "RGBA")
-            _text_shadow(d, (self.W // 2, self.caption_y), self.caption,
-                         self.f_caption, anchor="mm")
+        if not self.caption:
+            return frame
+        d = ImageDraw.Draw(frame, "RGBA")
+        lines = self._wrap_caption(d, self.caption, self.W - 2 * 64)
+        lh = int(self.f_caption.size * 1.26)
+        y0 = self.caption_y - (len(lines) - 1) * lh // 2
+        for i, ln in enumerate(lines):
+            _draw_mixed(frame, (self.W // 2, y0 + i * lh), ln,
+                        self.f_caption, anchor="mm")
         return frame
 
     def frame_at(self, n):
