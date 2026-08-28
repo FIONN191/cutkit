@@ -493,7 +493,9 @@ class DragDemo:
                 Image.open(self.result_path).convert("RGB")) if self.result_path else None
             if self.result is not None:
                 self.result = ImageOps.fit(self.result, self.photo.size, method=Image.LANCZOS)
-            self.static = None
+            # 拖拽风格自己逐帧画虚线框和加号，底层只要一张纯黑；
+            # 以前这里设成 None，非透明底时 _base_layer 的 .copy() 直接崩。
+            self.static = Image.new("RGB", (W, H), (0, 0, 0))
             v = Image.new("L", (W, H), 0)
             ImageDraw.Draw(v).ellipse((-260, 180, W + 260, H + 310), fill=170)
             v = v.filter(ImageFilter.GaussianBlur(210))

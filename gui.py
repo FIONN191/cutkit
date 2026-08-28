@@ -442,7 +442,7 @@ def worker(pairs, opts):
         with LOCK:
             STATE.update(busy=False, done=True, ok=False, cancelled=True)
     except Exception:
-        log("出错了:\n" + traceback.format_exc(limit=3))
+        log("出错了:\n" + traceback.format_exc(limit=8))
         with LOCK:
             STATE.update(busy=False, done=True, ok=False)
 
@@ -464,7 +464,7 @@ def worker_analyze(video):
         with LOCK:
             STATE.update(busy=False, done=True, ok=False, cancelled=True)
     except Exception:
-        log("出错了:\n" + traceback.format_exc(limit=3))
+        log("出错了:\n" + traceback.format_exc(limit=8))
         with LOCK:
             STATE.update(busy=False, done=True, ok=False)
 
@@ -484,7 +484,7 @@ def worker_screen(video, plan_d, texts, out, audio, zoom_end, zoom_photo):
         with LOCK:
             STATE.update(busy=False, done=True, ok=False, cancelled=True)
     except Exception:
-        log("出错了:\n" + traceback.format_exc(limit=3))
+        log("出错了:\n" + traceback.format_exc(limit=8))
         with LOCK:
             STATE.update(busy=False, done=True, ok=False)
 
@@ -510,7 +510,7 @@ def worker_demo(photo, result, caption, out, opts=None):
         with LOCK:
             STATE.update(busy=False, done=True, ok=False, cancelled=True)
     except Exception:
-        log("出错了:\n" + traceback.format_exc(limit=3))
+        log("出错了:\n" + traceback.format_exc(limit=8))
         with LOCK:
             STATE.update(busy=False, done=True, ok=False)
 
@@ -532,7 +532,7 @@ def worker_ring(opts):
         with LOCK:
             STATE.update(busy=False, done=True, ok=False, cancelled=True)
     except Exception:
-        log("出错了:\n" + traceback.format_exc(limit=3))
+        log("出错了:\n" + traceback.format_exc(limit=8))
         with LOCK:
             STATE.update(busy=False, done=True, ok=False)
 
