@@ -617,6 +617,9 @@ button.cancel:hover{background:#4a2c27}
 .dz{border:1px dashed transparent;border-radius:10px;padding:6px;margin:-6px;transition:border-color .12s,background .12s}
 .dz.over{border-color:var(--acc);background:#241a14}
 .dzhint{color:#6f7480;font-size:12px;margin-left:2px}
+.numpair{display:flex;align-items:center;gap:9px}
+.numpair input[type=range]{flex:1;min-width:64px}
+.numpair .numbox{flex:0 0 auto;width:76px;text-align:center;padding:6px 4px}
 /* 开关放在 .grid 里，得压过全局的 .grid label{display:block;font-size:12px} */
 .swrow{display:flex;gap:34px;align-items:center;flex-wrap:wrap;margin-top:2px}
 .swrow label.sw{display:inline-flex;align-items:center;gap:11px;margin:0;
@@ -1578,6 +1581,7 @@ async function rosieInit(){
   Object.keys(RPRESETS).forEach(n=>{const o=document.createElement('option');
     o.value=n;o.textContent=n;sel.appendChild(o);});
   if(r.sizes){$('r_precomp_size').value=r.sizes.precomp;$('r_watermark_size').value=r.sizes.watermark;}
+  syncNumPairs();
   renderRosieAssets();
   ROV=r.ov||{presets:{},last:''};
   renderOvPresets();
@@ -1600,7 +1604,67 @@ async function pickRosieAsset(kind){
 }
 function resetRosieSizes(){
   $('r_precomp_size').value=RDEFAULTS.precomp; $('r_watermark_size').value=RDEFAULTS.watermark;
-  ovSync(); post('/rosie_sizes',rSizes());
+  ovSync(); syncNumPairs(); post('/rosie_sizes',rSizes());
+}
+
+// ---------- 数值：滑杆与输入框并存 ----------
+// 一个通用绑定：原来是输入框的补一根滑杆，原来是滑杆的补一个输入框，两边互相跟随。
+// 拖滑杆时会在原元素上补发 input 事件，所以各模式原有的 oninput 逻辑照常触发。
+const NUMPAIRS=[];
+function numPair(id, min, max, step, valueSpan){
+  const el=$(id); if(!el||el.dataset.paired)return; el.dataset.paired='1';
+  const isRange = el.type==='range';
+  const wrap=document.createElement('div'); wrap.className='numpair';
+  el.parentNode.insertBefore(wrap, el);
+  const mate=document.createElement('input');
+  const clamp=v=>Math.max(min,Math.min(max,v));
+  const fire=()=>el.dispatchEvent(new Event('input',{bubbles:true}));
+  if(isRange){
+    mate.type='text'; mate.className='numbox'; mate.value=el.value;
+    wrap.appendChild(el); wrap.appendChild(mate);
+    el.addEventListener('input',()=>{mate.value=el.value;});
+    mate.addEventListener('input',()=>{
+      const v=parseFloat(mate.value);
+      if(isFinite(v)){el.value=clamp(v); fire();}
+    });
+    if(valueSpan&&$(valueSpan))$(valueSpan).style.display='none';   // 数字已在输入框里，别重复显示
+  }else{
+    mate.type='range'; mate.min=min; mate.max=max; mate.step=step;
+    mate.value=isFinite(parseFloat(el.value))?clamp(parseFloat(el.value)):min;
+    el.classList.add('numbox'); el.type='text';
+    wrap.appendChild(mate); wrap.appendChild(el);
+    el.addEventListener('input',()=>{
+      const v=parseFloat(el.value); if(isFinite(v))mate.value=clamp(v);
+    });
+    mate.addEventListener('input',()=>{el.value=mate.value; fire();});
+  }
+  NUMPAIRS.push({el, mate, isRange, clamp});
+}
+// 预设套用等场景是直接改 .value，不会触发 input —— 事后调一次让滑杆跟上
+function syncNumPairs(){
+  NUMPAIRS.forEach(({el, mate, isRange, clamp})=>{
+    if(isRange){ mate.value = el.value; }
+    else{ const v=parseFloat(el.value); if(isFinite(v))mate.value=clamp(v); }
+  });
+}
+function wireNumPairs(){
+  // 前后对比
+  numPair('caption_size', 20, 120, 1);
+  numPair('scene_sec', 0.5, 15, 0.1);
+  // 圆环箭头：本来只有滑杆，补上输入框（顺手把重复显示数值的小标签藏掉）
+  numPair('crop_x', 0, 1, 0.02, 'cxL');
+  numPair('crop_y', 0, 1, 0.02, 'cyL');
+  numPair('radius', 0.08, 0.30, 0.005, 'rL');
+  numPair('cx', 0.05, 0.95, 0.01, 'pxL');
+  numPair('cy', 0.05, 0.95, 0.01, 'pyL');
+  numPair('ringDur', 1, 30, 0.5);
+  // 录屏自动剪辑
+  numPair('r_paint_sec', 0.2, 6, 0.01);
+  numPair('r_type_speed', 1, 20, 0.5);
+  numPair('r_wait_sec', 0.1, 4, 0.05);
+  numPair('r_last_wait', 0.1, 4, 0.05);
+  // 广告成片
+  numPair('ad_seg_sec', 0.1, 1.5, 0.05, 'ad_seg_secL');
 }
 
 // ---------- 广告成片 ----------
@@ -1750,7 +1814,7 @@ function applyPairPreset(){
   PP_TEXT.forEach(k=>{if(p[k]!==undefined)$(k).value=p[k];});
   if(p.align_on!==undefined)$('alignOn').checked=!!p.align_on;
   if(p.align_fill!==undefined)$('alignFill').checked=!!p.align_fill;
-  alignChanged(); syncReveal();
+  alignChanged(); syncReveal(); syncNumPairs();
   $('pairPresetHint').textContent=`已套用：${n}`;
 }
 async function savePairPreset(){
@@ -1836,6 +1900,7 @@ async function applyRosieOvPreset(){
   RASSETS=r.assets||RASSETS;
   if(r.sizes){$('r_precomp_size').value=r.sizes.precomp;$('r_watermark_size').value=r.sizes.watermark;}
   if(r.ov)ROV=r.ov;
+  syncNumPairs();
   renderRosieAssets(); ovArt();
   $('ovPresetHint').textContent=`已套用预设：${n}`;
 }
@@ -1857,6 +1922,7 @@ async function delRosieOvPreset(){
 function applyRosiePreset(){
   const p=RPRESETS[$('rosiePreset').value]; if(!p)return;
   RKEYS.forEach(k=>{if(p[k]!==undefined)$('r_'+k).value=p[k];});
+  syncNumPairs();
 }
 async function saveRosiePreset(){
   const n=$('rosiePresetName').value.trim(); if(!n){alert('请填预设名');return;}
@@ -2195,6 +2261,7 @@ async function poll(){
   SLOTS=Array.from({length:GROUPS},()=>({B:'',A:''}));
   PPRESETS=s.pair_presets||{presets:{},last:''};
   renderPairPresets();
+  wireNumPairs();
   syncReveal();
   renderGroups();
   alignChanged();
