@@ -271,9 +271,9 @@ def _smooth(a):
 # progress    进度条还原：顶部扫描线 + 处理进度条
 # comment     评论区驱动：先出一条评论卡，再还原
 # grid        九宫格多米诺：多对图同屏，逐格翻转
-REVEAL_MODES = ("sweep", "once", "reverse", "wipe", "flicker",
+REVEAL_MODES = ("linger", "sweep", "once", "reverse", "wipe", "flicker",
                 "progress", "comment", "grid")
-_SLIDER_LIKE = ("sweep", "once", "comment")
+_SLIDER_LIKE = ("linger", "sweep", "once", "comment")
 
 
 def _blob_field(W, H, center=(0.5, 0.5), seed=7, wobble=0.55, cells=5):
@@ -353,9 +353,18 @@ def _wrap(draw, text, font, max_w):
 # 滑杆扫动关键帧: (场景内时间比例, 滑杆x比例)
 # sweep = 来回扫几次（原工作流）; once = 只滑一次并滑到底（全 Before → 全 After）
 _SLIDER_KEYS = {
+    # 中段放慢：两头快、中间慢，前后各留一段停顿。
+    # 时间配比照参考片（Meitu 那条）实测折算：停 17% → 冲进 40% 行程 → 中段 40%
+    # 的时间只走 31% 行程 → 收尾冲完 → 停 29%。把时间花在画面中段（人脸所在），
+    # 边缘一带而过。
+    "linger": [(0.0, 1.0), (0.16, 1.0), (0.26, 0.62), (0.62, 0.34),
+               (0.74, 0.0), (1.0, 0.0)],
     "sweep": [(0.0, 0.94), (0.30, 0.06), (0.58, 0.66), (0.92, 0.05), (1.0, 0.05)],
     "once": [(0.0, 1.0), (0.14, 1.0), (0.86, 0.0), (1.0, 0.0)],
 }
+
+# 这些模式的滑杆会走到画面最边缘（露出完整的一侧），到边时要把滑杆和手柄藏起来
+_EDGE_MODES = ("once", "linger")
 
 # 每个场景滑杆手柄的默认纵向位置（循环使用）
 _HANDLE_CYCLE = (0.45, 0.75, 0.62)
@@ -409,8 +418,9 @@ class Renderer:
         # reveal 优先；未给则沿用旧的 slider_mode（向后兼容）
         mode = (reveal or slider_mode or "sweep")
         self.reveal = mode if mode in REVEAL_MODES else "sweep"
-        # 滑杆本身的运动曲线：comment 模式复用 once
-        self.slider_mode = ("once" if self.reveal in ("once", "comment")
+        # 滑杆本身的运动曲线：comment 模式复用 once，linger 有自己的曲线
+        self.slider_mode = ("linger" if self.reveal == "linger"
+                            else "once" if self.reveal in ("once", "comment")
                             else "sweep")
         # rtl = 滑杆从右往左（默认，前三条的行为）; ltr = 从左往右
         self.ltr = (direction == "ltr")
@@ -695,8 +705,8 @@ class Renderer:
         if self.ltr:
             x = 1.0 - x          # 镜像整条运动曲线
         px = int(round(x * self.CW))
-        # once 模式允许滑到最边（滑杆滑出画面，露出完整的一侧）
-        px = (max(0, min(self.CW, px)) if self.slider_mode == "once"
+        # 这些模式允许滑到最边（滑杆滑出画面，露出完整的一侧）
+        px = (max(0, min(self.CW, px)) if self.slider_mode in _EDGE_MODES
               else max(10, min(self.CW - 10, px)))
         # rtl: 左 Before / 右 After；ltr: 左 After / 右 Before
         base, top = ((sc["before"], sc["after"]) if self.ltr
@@ -704,7 +714,7 @@ class Renderer:
         comp = base.copy()
         if px > 0:
             comp.paste(top.crop((0, 0, px, self.CH)), (0, 0))
-        at_edge = self.slider_mode == "once" and (px <= 0 or px >= self.CW)
+        at_edge = self.slider_mode in _EDGE_MODES and (px <= 0 or px >= self.CW)
         if not at_edge:
             dd = ImageDraw.Draw(comp, "RGBA")
             dd.rectangle((px - 3, 0, px + 3, self.CH), fill=(255, 255, 255, 235))

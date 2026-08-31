@@ -54,7 +54,7 @@ DEFAULT_SETTINGS = {
     "jy_auto": "", "jy_dir": "",
     "caption": "", "caption_size": "55",
     "label_before": "Before", "label_after": "After",
-    "scene_sec": "3.6", "transition": "spin", "slider": "sweep", "audio": "",
+    "scene_sec": "3.6", "transition": "spin", "slider": "linger", "audio": "",
     "demo_caption": "Just upload one photo",
     "comment_user": "@user",
     "comment_text": "can u remove the matcha filter from this",
@@ -770,6 +770,7 @@ border-radius:10px;display:none}
 </div>
 <div class="hint" id="alignHint" style="margin-top:8px"></div></div>
 <div><label>对比展示方式</label><select id="slider" onchange="syncReveal()">
+<option value="linger">滑杆·中段放慢</option>
 <option value="sweep">滑杆·来回扫</option>
 <option value="once">滑杆·滑到底</option>
 <option value="reverse">反向污染</option>
@@ -1131,8 +1132,9 @@ border-radius:10px;display:none}
 <div><label>Before 标签</label><input id="ad_label_before" value="Before"></div>
 <div><label>After 标签</label><input id="ad_label_after" value="After"></div>
 <div><label>对比展示方式</label><select id="ad_slider">
-<option value="sweep">滑杆·来回扫</option><option value="push">滑杆·滑到底</option>
-<option value="wipe">硬擦除</option></select></div>
+<option value="linger">滑杆·中段放慢</option>
+<option value="sweep">滑杆·来回扫</option><option value="once">滑杆·滑到底</option>
+<option value="wipe">手指擦除</option></select></div>
 <div><label>对比片段之间</label><select id="ad_transition">
 <option value="spin">旋转模糊</option><option value="none">直切</option></select></div>
 <div><label>段落之间的转场</label><select id="ad_seg_trans" onchange="adSegTransChanged()">
@@ -2043,6 +2045,7 @@ function setMode(m){
   if(m==='ad'){renderAdGroups();adSegTransChanged();}
 }
 const REVEAL_HINT={
+  linger:'滑到底，但两头快、中间慢 —— 时间花在画面中段（人脸所在），边缘一带而过；前后各停一拍。',
   sweep:'滑杆左右来回扫动 —— 前三条用的就是这个。',
   once:'滑杆只滑一次并滑到底，从整张 Before 推到整张 After。',
   reverse:'先给完整成图（前 1 秒屏幕上是"奖励"不是绿色），绿色再从中心蔓延吞掉它，最后扫描线把画面还原。专治开头掉人。',
