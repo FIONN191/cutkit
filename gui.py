@@ -2060,7 +2060,7 @@ function syncReveal(){
   for(const c of ['rvcomment','rvprogress'])
     document.querySelectorAll('.'+c).forEach(e=>{
       e.style.display=(c==='rv'+v)?'':'none';});
-  const hasDir=['sweep','once','comment','wipe','grid'].includes(v);
+  const hasDir=['linger','sweep','once','comment','wipe','grid'].includes(v);
   document.querySelectorAll('.rvdir').forEach(e=>{e.style.display=hasDir?'':'none';});
 }
 let RPHOTO='', RTIMER=null;
