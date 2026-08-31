@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from render import ffmpeg_exe, _font, check_cancel, run_tracked, track_proc
 
@@ -286,9 +286,8 @@ def build_zoom_tail(base_img, tmp_dir, photo_path, log=None):
     log = log or (lambda s: None)
     if not (photo_path and os.path.isfile(photo_path)):
         raise ValueError("结尾放大需要选择结果原图")
-    from PIL import ImageOps as _IO
     photo = Image.open(photo_path).convert("RGB")
-    photo = _IO.exif_transpose(photo)
+    photo = ImageOps.exif_transpose(photo)
 
     rect = detect_result_rect(base_img)
     if rect is None:

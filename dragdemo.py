@@ -8,10 +8,14 @@
 几何与时间轴按参考片逐帧实测得到；Fotor 转场是随包的 VP9-alpha webm
 (assets/fotor-loading.webm，由原始 113MB ProRes/qtrle 无损压到 ~180KB)。
 """
+import math
 import os
+import re
 import subprocess
 import sys
+import wave
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from render import (ffmpeg_exe, _font, _smooth,
@@ -55,7 +59,6 @@ def asset_path(name):
 
 def probe_duration(path):
     r = subprocess.run([ffmpeg_exe(), "-i", path], capture_output=True, text=True)
-    import re
     m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", r.stderr)
     if not m:
         return 0.0
@@ -90,7 +93,6 @@ def _dashed_round_rect(d, box, radius, on, off, width, color):
                 d.line((ax, ay + pos, ax, ay + e), fill=color, width=width)
             pos = e + off
     # 四角圆弧
-    import math
     step = (on + off) / max(r, 1) * 57.2958 / 2   # 角度步长
     for cx, cy, a0 in ((x0 + r, y0 + r, 180), (x1 - r, y0 + r, 270),
                        (x1 - r, y1 - r, 0), (x0 + r, y1 - r, 90)):
@@ -101,19 +103,51 @@ def _dashed_round_rect(d, box, radius, on, off, width, color):
             a += step
 
 
-def build_pill(caption):
-    """粉色标题药丸单独出一张透明图 —— 它要盖在转场蒙版之上，保持不被压暗。"""
+# 标题样式。box: pill=胶囊 / rect=方角块 / None=只有字。
+# stroke 是描边宽度，shadow 是投影偏移。
+# 演示片的底是纯黑，所以黑底色块 / 黑描边 / 投影在这里都看不出差别 ——
+# 只保留在黑底上真正有区分度的几种。
+CAPTION_STYLES = [
+    ("pill_pink",    "粉色药丸",   dict(box="pill", bg=(210, 30, 247), fg=(255, 255, 255))),
+    ("pill_white",   "白色药丸",   dict(box="pill", bg=(255, 255, 255), fg=(20, 20, 22))),
+    ("pill_yellow",  "黄色药丸",   dict(box="pill", bg=(255, 214, 10),  fg=(20, 20, 22))),
+    ("pill_cyan",    "青色药丸",   dict(box="pill", bg=(46, 214, 214),  fg=(12, 32, 34))),
+    ("rect_white",   "白色方块",   dict(box="rect", bg=(255, 255, 255), fg=(20, 20, 22))),
+    ("plain",        "纯白大字",   dict(box=None, fg=(255, 255, 255))),
+    ("outline_pink", "粉字白描边", dict(box=None, fg=(255, 92, 214), stroke=(255, 255, 255), sw=9)),
+    ("outline_wp",   "白字粉描边", dict(box=None, fg=(255, 255, 255), stroke=(226, 42, 200), sw=9)),
+]
+CAPTION_STYLE_KEYS = {k for k, _, _ in CAPTION_STYLES}
+_CAPTION_STYLE_MAP = {k: v for k, _, v in CAPTION_STYLES}
+
+
+def build_pill(caption, style="pill_pink"):
+    """标题单独出一张透明图 —— 它要盖在转场蒙版之上，保持不被压暗。"""
     im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     if not caption:
         return im
+    st = _CAPTION_STYLE_MAP.get(style) or _CAPTION_STYLE_MAP["pill_pink"]
     d = ImageDraw.Draw(im)
     f = _font(56, "bold", caption)
     tw = d.textlength(caption, font=f)
-    half = min(tw / 2 + PILL_PAD, W / 2 - 40)
-    d.rounded_rectangle((W / 2 - half, PILL_Y0, W / 2 + half, PILL_Y1),
-                        PILL_R, fill=PILL_FILL + (255,))
-    d.text((W / 2, (PILL_Y0 + PILL_Y1) / 2), caption, font=f,
-           fill=(255, 255, 255, 255), anchor="mm")
+    cy = (PILL_Y0 + PILL_Y1) / 2
+
+    box = st.get("box")
+    if box:
+        half = min(tw / 2 + PILL_PAD, W / 2 - 40)
+        xy = (W / 2 - half, PILL_Y0, W / 2 + half, PILL_Y1)
+        r = PILL_R if box == "pill" else 8
+        d.rounded_rectangle(xy, r, fill=tuple(st["bg"]) + (255,))
+
+    sh = st.get("shadow")
+    if sh:
+        d.text((W / 2 + sh[0], cy + sh[1]), caption, font=f,
+               fill=(0, 0, 0, 150), anchor="mm")
+    kw = {}
+    if st.get("stroke"):
+        kw = dict(stroke_width=st.get("sw", 8), stroke_fill=tuple(st["stroke"]) + (255,))
+    d.text((W / 2, cy), caption, font=f,
+           fill=tuple(st["fg"]) + (255,), anchor="mm", **kw)
     return im
 
 
@@ -256,7 +290,6 @@ def drag_motion(t, aspect, target):
     if t < D_DRAG0:
         return sx, _lerp(1505, sy, appear), sw * _clamp(appear), _lerp(7.0, -4.0, _clamp(appear))
     if t < D_SNAP:
-        import math
         curve = math.sin(math.pi * drag)
         return (_lerp(sx, tx, drag) - 72 * curve,
                 _lerp(sy, ty, drag) - 35 * curve,
@@ -284,8 +317,6 @@ def photo_state(t):
 
 # ---------- 拖拽音效（合成，无需素材） ----------
 def create_audio(path, dur, drag0=D_DRAG0, snap=D_SNAP):
-    import wave
-    import numpy as np
     sr = 48000
     n = max(1, round(dur * sr))
     t = np.arange(n, dtype=np.float64) / sr
@@ -350,16 +381,18 @@ class DragDemo:
     transparent: True 输出带 alpha 的 MOV，可直接盖在自己的视频上（剪映/CapCut）
     """
 
-    def __init__(self, photo, out_path, caption="Just upload one photo",
+    def __init__(self, photo, out_path, caption="Upload Your Photo",
                  result=None, transition=None, tail=TAIL, tmp_dir=None,
                  motion="slide", transparent=False, aspect_fit=None,
                  cursor=None, sound=False, glow=True, use_transition=True,
-                 progress=None, log=None):
+                 caption_style="pill_pink", progress=None, log=None):
         self.tmp_dir = tmp_dir or os.path.join(
             os.path.expanduser("~/Library/Caches"), "CutKit")
         self.photo_path = photo
         self.out_path = out_path
         self.caption = caption or ""
+        self.caption_style = (caption_style if caption_style in CAPTION_STYLE_KEYS
+                              else "pill_pink")
         self.result_path = result or None
         self.motion = motion if motion in ("slide", "drag") else "slide"
         self.transparent = bool(transparent)
@@ -411,7 +444,6 @@ class DragDemo:
         return frame
 
     def _frame_drag(self, t):
-        import math
         frame = self._base_layer()
         target = self.target
         if not self.transparent:
@@ -508,7 +540,8 @@ class DragDemo:
             self.result = load_photo(self.result_path, box) if self.result_path else None
             self.static = build_static()
 
-        self.pill = build_pill(self.caption) if (self.caption and not self.transparent) else None
+        self.pill = (build_pill(self.caption, self.caption_style)
+                     if (self.caption and not self.transparent) else None)
         self.stream = TransitionStream(self.transition) if self.transition else None
 
         wav = None
@@ -574,7 +607,9 @@ def main(argv):
     ap = argparse.ArgumentParser(description="CutKit — 拖照片效果演示生成")
     ap.add_argument("photo", help="要上传演示的照片（任意比例）")
     ap.add_argument("-o", "--out", default=None)
-    ap.add_argument("--caption", default="Just upload one photo")
+    ap.add_argument("--caption", default="Upload Your Photo")
+    ap.add_argument("--caption-style", default="pill_pink",
+                    choices=[k for k, _, _ in CAPTION_STYLES])
     ap.add_argument("--result", default=None, help="AI 结果图（转场后淡入）")
     ap.add_argument("--motion", choices=("slide", "drag"), default="slide",
                     help="slide=复刻参考片飞入; drag=光标拖拽（任意比例自适应）")
@@ -599,6 +634,7 @@ def main(argv):
              transparent=args.transparent, aspect_fit=args.aspect_fit,
              cursor=args.cursor, sound=args.sound,
              use_transition=args.use_transition,
+             caption_style=args.caption_style,
              progress=lambda d, t: (d % 30 == 0) and print(f"{d}/{t}"),
              log=print).render()
     print("OK", out)

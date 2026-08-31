@@ -49,13 +49,13 @@ SETTING_KEYS = ("jy_auto", "jy_dir",
                 "caption", "caption_size", "label_before", "label_after",
                 "scene_sec", "transition", "slider", "audio", "demo_caption",
                 "comment_user", "comment_text", "progress_text", "direction",
-                "pair_groups")
+                "pair_groups", "demo_caption_style")
 DEFAULT_SETTINGS = {
     "jy_auto": "", "jy_dir": "",
     "caption": "", "caption_size": "55",
     "label_before": "Before", "label_after": "After",
     "scene_sec": "3.6", "transition": "spin", "slider": "linger", "audio": "",
-    "demo_caption": "Just upload one photo",
+    "demo_caption": "Upload Your Photo", "demo_caption_style": "pill_pink",
     "comment_user": "@user",
     "comment_text": "can u remove the matcha filter from this",
     "progress_text": "Removing filter",
@@ -529,6 +529,7 @@ def worker_demo(photo, result, caption, out, opts=None):
                           transparent=o.get("transparent", False),
                           cursor=o.get("cursor"), sound=o.get("sound", False),
                           use_transition=o.get("use_transition", True),
+                          caption_style=o.get("caption_style", "pill_pink"),
                           progress=prog, log=log).render()
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, out=out)
@@ -896,7 +897,8 @@ border-radius:10px;display:none}
 <h2>② 参数</h2>
 <div class="grid">
 <div style="grid-column:1/3"><label>顶部标题（粉色药丸，留空则不加）</label>
-<input id="demoCaption" value="Just upload one photo"></div>
+<input id="demoCaption" value="Upload Your Photo"></div>
+<div><label>标题样式</label><select id="demoCaptionStyle"><option value="pill_pink">粉色药丸</option><option value="pill_black">黑色药丸</option><option value="pill_white">白色药丸</option><option value="pill_yellow">黄色药丸</option><option value="rect_black">黑色方块</option><option value="outline">白字黑描边</option><option value="outline_pink">粉字白描边</option><option value="shadow">白字投影</option></select></div>
 <div><label>动画风格</label><select id="demoMotion" onchange="demoMotionChanged()">
 <option value="slide">飞入落框（复刻参考片）</option>
 <option value="drag">光标拖拽（任意比例自适应）</option></select></div>
@@ -2131,6 +2133,7 @@ async function runDemo(){
   const r=await post('/run_demo',{photo:DPHOTO,result:DRESULT,caption:$('demoCaption').value,
     motion:$('demoMotion').value, transparent:$('demoTransparent').checked,
     cursor:$('demoCursor').checked, sound:$('demoSound').checked,
+    caption_style:$('demoCaptionStyle').value,
     use_transition:$('demoTrans2').checked});
   if(r.error){$('prog3').textContent=r.error;return;}
   BUSY=true;$('goDemo').disabled=true;
@@ -2257,6 +2260,7 @@ async function poll(){
   for(const k of ['caption','caption_size','label_before','label_after','scene_sec','transition','slider','direction','comment_user','comment_text','progress_text'])
     if(s[k]!==undefined&&s[k]!=='')$(k).value=s[k];
   if(s.demo_caption)$('demoCaption').value=s.demo_caption;
+  if(s.demo_caption_style)$('demoCaptionStyle').value=s.demo_caption_style;
   if(s.audio){AUDIO=s.audio;$('audioName').textContent=base(AUDIO);$('audioName2').textContent=base(AUDIO);}
   // 上传框组数：记住上次用的，默认 2 组
   const gn=parseInt(s.pair_groups,10);
@@ -2734,6 +2738,9 @@ class Handler(BaseHTTPRequestHandler):
                 "cursor": None if d.get("cursor") is None else bool(d.get("cursor")),
                 "sound": bool(d.get("sound")),
                 "use_transition": bool(d.get("use_transition", True)),
+                "caption_style": (d.get("caption_style")
+                                  if d.get("caption_style") in dragdemo.CAPTION_STYLE_KEYS
+                                  else "pill_pink"),
             }
             out = os.path.splitext(photo)[0] + "-拖照片演示" + \
                 (".mov" if dopts["transparent"] else ".mp4")
@@ -2749,7 +2756,8 @@ class Handler(BaseHTTPRequestHandler):
                 render.clear_cancel()
                 STATE.update(busy=True, done=False, ok=False, cancelled=False, out=None,
                              kind="demo", prog_done=0, prog_total=0, lines=[])
-            save_settings({"demo_caption": d.get("caption", "")})
+            save_settings({"demo_caption": d.get("caption", ""),
+                           "demo_caption_style": dopts["caption_style"]})
             threading.Thread(target=worker_demo,
                              args=(photo, result, (d.get("caption") or "").strip(),
                                    out, dopts),
@@ -2978,7 +2986,28 @@ def watchdog():
             os._exit(0)
 
 
+def warm_imports():
+    """启动时（主线程）把渲染链路会用到的模块全部导入一遍。
+
+    冻结包里模块是压缩存放的，PyInstaller 的导入器解压时共用一份 zlib 状态；
+    两个工作线程同时首次导入同一个模块会把它撞坏，报
+    "zlib.error: Error -3 while decompressing data: incorrect header check"。
+    提前在单线程里导完，工作线程就再也不需要现场解压。
+    """
+    import importlib
+    for name in ("wave", "math", "re", "shutil", "argparse", "urllib.request",
+                 "numpy", "PIL.Image", "PIL.ImageDraw", "PIL.ImageFilter",
+                 "PIL.ImageFont", "PIL.ImageOps", "imageio_ffmpeg",
+                 "align", "adcut", "dragdemo", "ringarrow", "screencut",
+                 "rosie", "rosiecut", "history", "analyze", "nl"):
+        try:
+            importlib.import_module(name)
+        except Exception:
+            pass
+
+
 def run_gui():
+    warm_imports()
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     port = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
