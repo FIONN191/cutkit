@@ -207,6 +207,7 @@ EN = {
     "AI 视频 · 新建": "AI Video · Create",
     "AI 视频 · Magic Sync": "AI Video · Magic Sync",
     "AI 图片创作": "AI Image Create",
+    "钉钉文档": "DingTalk Doc", "钉钉表格": "DingTalk Sheet",
     "图片": "image", "视频": "video", "音频": "audio",
 }
 

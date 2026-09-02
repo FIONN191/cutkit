@@ -2408,6 +2408,15 @@ SHORTCUTS = [
     ("AI 视频 · 新建", "https://www.fotor.com/apps/ai-video-generator/#from-create"),
     ("AI 视频 · Magic Sync", "https://www.fotor.com/apps/ai-video-generator/#from-magic-sync"),
     ("AI 图片创作", "https://www.fotor.com/images/create/"),
+    ("Pinterest", "https://www.pinterest.com/"),
+    ("钉钉文档", "https://alidocs.dingtalk.com/i/nodes/ZX6GRezwJl5bRPBDfgX6KqdP8dqbropQ"
+                 "?cid=76657130221&utm_source=im&utm_scene=person_space"
+                 "&iframeQuery=utm_medium%253Dim_card%2526utm_source%253Dim"
+                 "&utm_medium=im_card&corpId=dingcfe491e24cf0192a35c2f4657eb6378f"),
+    ("钉钉表格", "https://alidocs.dingtalk.com/spreadsheetv2/meeagJ10uzYWEwQ5/edit"
+                 "?cid=76657130221&type=s&docKey=oJGq75k2y9LdBlAK"
+                 "&dentryKey=meeagJ10uzYWEwQ5&utm_source=im&utm_medium=im_card"
+                 "&dontjump=true&chInfo=im"),
 ]
 
 
