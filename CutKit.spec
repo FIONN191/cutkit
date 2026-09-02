@@ -8,7 +8,7 @@ MAC = sys.platform == "darwin"
 datas = [('assets', 'assets')]   # Fotor 转场素材随包分发
 binaries = []
 hiddenimports = ['render', 'screencut', 'history', 'dragdemo', 'ringarrow', 'align',
-                 'rosie', 'rosiecut', 'nl', 'analyze']
+                 'rosie', 'rosiecut', 'nl', 'analyze', 'adcut', 'i18n']
 for pkg in ('imageio_ffmpeg', 'webview', 'cv2'):
     d, b, h = collect_all(pkg)
     datas += d; binaries += b; hiddenimports += h

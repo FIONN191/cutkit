@@ -27,6 +27,7 @@ import rosie
 import rosiecut
 import ringarrow
 import adcut
+import i18n
 
 STATE = {
     "lines": [],
@@ -49,7 +50,8 @@ SETTING_KEYS = ("jy_auto", "jy_dir",
                 "caption", "caption_size", "label_before", "label_after",
                 "scene_sec", "transition", "slider", "audio", "demo_caption",
                 "comment_user", "comment_text", "progress_text", "direction",
-                "pair_groups", "demo_caption_style")
+                "pair_groups", "demo_caption_style",
+                "theme", "accent", "lang")
 DEFAULT_SETTINGS = {
     "jy_auto": "", "jy_dir": "",
     "caption": "", "caption_size": "55",
@@ -60,7 +62,7 @@ DEFAULT_SETTINGS = {
     "comment_text": "can u remove the matcha filter from this",
     "progress_text": "Removing filter",
     "direction": "rtl",
-    "pair_groups": "2",
+    "pair_groups": "2", "theme": "dark", "accent": "orange", "lang": "zh",
 }
 
 
@@ -570,30 +572,69 @@ PAGE = r"""<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <title>CutKit 视频运营工具箱</title>
 <style>
-:root{--bg:#101014;--card:#1a1a21;--line:#2a2a33;--txt:#ececf1;--dim:#9a9aa5;
---acc:#ff7a45;--acc2:#ffb347;}
+/* ---- 主题 token ----
+   深色是基准；[data-theme=light] 只覆盖表面/线/文字，[data-accent=*] 只覆盖强调色，
+   两者正交，所以 2 种明暗 × 6 套配色 = 12 种组合，只维护两张小表。 */
+:root{
+  --bg:#101014; --card:#1a1a21; --sunken:#15151b; --sunken-hi:#191c21;
+  --deep:#0b0b0f; --input:#131318; --btn:#2c2c36; --track:#26262f;
+  --switch:#3d3d49; --knob:#ffffff; --media:#000000;
+  --line:#2a2a33; --line2:#34343f; --btn-line:#3a3a46;
+  --dash:#3a4049; --dash-hi:#5a626e;
+  --txt:#ececf1; --txt2:#c9ced6; --dim:#9a9aa5; --faint:#6f7480;
+  --shadow:rgba(0,0,0,.45); --shadow2:rgba(0,0,0,.5); --scrim:rgba(0,0,0,.62);
+  --logo-dark:#2e2e33; --logo-edge:#ffd9c0;
+}
+:root{  /* 默认配色：橙（与 App 图标一致） */
+  --acc:#ff7a45; --acc2:#ffb347; --acc-deep:#f2641a;
+  --on-acc:#1b0d05; --acc-bg:#241a14; --acc-glow:rgba(255,122,69,.25);
+  --badge-bg:#3a2a12;
+  --danger-bg:#3a2320; --danger-hi:#4a2c27; --danger-line:#6b3a30; --danger-fg:#ffb9a6;
+}
+[data-accent="blue"]{--acc:#3d8bff; --acc2:#66c6ff; --acc-deep:#1f6ae0;
+  --on-acc:#04101f; --acc-bg:#12203a; --acc-glow:rgba(61,139,255,.25); --badge-bg:#12263f;}
+[data-accent="violet"]{--acc:#a367ff; --acc2:#d49bff; --acc-deep:#8341e6;
+  --on-acc:#14041f; --acc-bg:#241436; --acc-glow:rgba(163,103,255,.25); --badge-bg:#26173a;}
+[data-accent="green"]{--acc:#35c47a; --acc2:#8ee2a6; --acc-deep:#1ea15d;
+  --on-acc:#04170d; --acc-bg:#12291d; --acc-glow:rgba(53,196,122,.25); --badge-bg:#143020;}
+[data-accent="rose"]{--acc:#ff5c96; --acc2:#ff9dc0; --acc-deep:#e63c78;
+  --on-acc:#1f0410; --acc-bg:#33141f; --acc-glow:rgba(255,92,150,.25); --badge-bg:#3a1624;}
+[data-accent="mono"]{--acc:#c9ced6; --acc2:#8f959e; --acc-deep:#9aa0a8;
+  --on-acc:#14141a; --acc-bg:#22242a; --acc-glow:rgba(201,206,214,.22); --badge-bg:#26282e;}
+
+/* 浅色：只换表面/线/文字，强调色沿用上面选中的那套 */
+[data-theme="light"]{
+  --bg:#f4f5f7; --card:#ffffff; --sunken:#f0f1f4; --sunken-hi:#e8eaef;
+  --deep:#e4e6ea; --input:#ffffff; --btn:#eceef2; --track:#dfe2e8;
+  --switch:#c6cad3; --knob:#ffffff; --media:#e9ebef;
+  --line:#dfe2e8; --line2:#cfd4dd; --btn-line:#d3d8e1;
+  --dash:#c2c8d3; --dash-hi:#98a1b0;
+  --txt:#1c1f24; --txt2:#3a3f47; --dim:#6b7280; --faint:#9aa1ac;
+  --shadow:rgba(0,0,0,.14); --shadow2:rgba(0,0,0,.18); --scrim:rgba(0,0,0,.5);
+  --logo-dark:#2e2e33; --logo-edge:#ffd9c0;
+}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--txt);font:15px/1.5 -apple-system,"PingFang SC",sans-serif;padding:20px 22px 40px}
 h1{font-size:20px;display:flex;align-items:center;gap:10px;margin-bottom:16px}
-h1 .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(144deg,#2e2e33 61%,#ffd9c0 61%,#ffd9c0 63%,#ff7e2e 63%,#f2641a);display:inline-block}
+h1 .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(144deg,var(--logo-dark) 61%,var(--logo-edge) 61%,var(--logo-edge) 63%,var(--acc) 63%,var(--acc-deep));display:inline-block}
 h1 small{color:var(--dim);font-weight:400;font-size:13px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
 .card h2{font-size:14px;color:var(--dim);margin-bottom:12px;font-weight:600}
-button{background:#2c2c36;color:var(--txt);border:1px solid #3a3a46;border-radius:9px;
+button{background:var(--btn);color:var(--txt);border:1px solid var(--btn-line);border-radius:9px;
 padding:8px 14px;font-size:14px;cursor:pointer}
-button:hover{background:#34343f}
-button.primary{background:linear-gradient(120deg,var(--acc),var(--acc2));border:none;color:#1b0d05;font-weight:700;padding:12px 22px;font-size:16px}
+button:hover{background:var(--line2)}
+button.primary{background:linear-gradient(120deg,var(--acc),var(--acc2));border:none;color:var(--on-acc);font-weight:700;padding:12px 22px;font-size:16px}
 button.small{padding:3px 9px;font-size:12px;border-radius:7px}
 button:disabled{opacity:.45;cursor:default}
-input,select{background:#131318;color:var(--txt);border:1px solid #34343f;border-radius:8px;padding:7px 10px;font-size:14px;width:100%}
+input,select{background:var(--input);color:var(--txt);border:1px solid var(--line2);border-radius:8px;padding:7px 10px;font-size:14px;width:100%}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .row>button{white-space:nowrap;flex:0 0 auto}
 .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px 14px}
 .grid label{font-size:12px;color:var(--dim);display:block;margin-bottom:3px}
 .folder{color:var(--dim);font-size:13px;word-break:break-all;flex:1}
 #pairs{display:flex;flex-direction:column;gap:10px;margin-top:12px}
-.pair{display:flex;align-items:center;gap:12px;background:#15151b;border:1px solid var(--line);border-radius:12px;padding:10px}
-.pair img{width:84px;height:112px;object-fit:cover;border-radius:8px;background:#000}
+.pair{display:flex;align-items:center;gap:12px;background:var(--sunken);border:1px solid var(--line);border-radius:12px;padding:10px}
+.pair img{width:84px;height:112px;object-fit:cover;border-radius:8px;background:var(--media)}
 .pair .arrow{color:var(--acc);font-size:20px}
 .pair .name{font-size:11px;color:var(--dim);max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;margin-top:3px}
 .pair .ops{margin-left:auto;display:flex;flex-direction:column;gap:6px}
@@ -602,22 +643,26 @@ input,select{background:#131318;color:var(--txt);border:1px solid #34343f;border
 .uprow{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:4px}
 .upcol>label{display:block;font-weight:700;font-size:13px;margin-bottom:8px}
 .upcol>label span{font-weight:400;color:var(--dim)}
-.drop{position:relative;overflow:hidden;border:2px dashed #3a4049;border-radius:14px;
+.drop{position:relative;overflow:hidden;border:2px dashed var(--dash);border-radius:14px;
   min-height:200px;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:10px;cursor:pointer;background:#15171b;transition:border-color .15s,background .15s}
-.drop:hover{border-color:#5a626e;background:#191c21}
+  gap:10px;cursor:pointer;background:var(--sunken);transition:border-color .15s,background .15s}
+.drop:hover{border-color:var(--dash-hi);background:var(--sunken-hi)}
 /* 组数多了就把框压矮，不然 3 组要滚半天 */
 .compact .drop{min-height:118px;gap:5px}
 .compact .drop .ico{font-size:24px}
 .compact .drop .txt{font-size:12px}
 .compact .upcol>label{margin-bottom:5px;font-size:12px}
 .compact .uprow{gap:14px}
-.drop.over{border-color:var(--acc);background:#241a14}
-button.cancel{background:#3a2320;border:1px solid #6b3a30;color:#ffb9a6}
-button.cancel:hover{background:#4a2c27}
+.drop.over{border-color:var(--acc);background:var(--acc-bg)}
+button.cancel{background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-fg)}
+button.cancel:hover{background:var(--danger-hi)}
 .dz{border:1px dashed transparent;border-radius:10px;padding:6px;margin:-6px;transition:border-color .12s,background .12s}
-.dz.over{border-color:var(--acc);background:#241a14}
-.dzhint{color:#6f7480;font-size:12px;margin-left:2px}
+.dz.over{border-color:var(--acc);background:var(--acc-bg)}
+.dzhint{color:var(--faint);font-size:12px;margin-left:2px}
+.topbar{margin-left:auto;display:flex;gap:8px;align-items:center}
+.topbar .mini{width:auto;min-width:74px;padding:4px 8px;font-size:12px}
+.topbar #themeBtn{padding:4px 10px;font-size:14px;line-height:1.2}
+.shortcuts{margin:-6px 0 14px}
 .numpair{display:flex;align-items:center;gap:9px}
 .numpair input[type=range]{flex:1;min-width:64px}
 .numpair .numbox{flex:0 0 auto;width:76px;text-align:center;padding:6px 4px}
@@ -627,11 +672,11 @@ button.cancel:hover{background:#4a2c27}
   cursor:pointer;user-select:none;font-size:14px;color:var(--txt)}
 .swrow label.sw>input{display:none}
 .swrow label.sw .track{flex:0 0 auto;width:46px;height:26px;border-radius:13px;
-  background:#3d3d49;position:relative;transition:background .18s;
-  box-shadow:inset 0 1px 2px rgba(0,0,0,.45)}
+  background:var(--switch);position:relative;transition:background .18s;
+  box-shadow:inset 0 1px 2px var(--shadow)}
 .swrow label.sw .track::after{content:"";position:absolute;top:3px;left:3px;
-  width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .18s;
-  box-shadow:0 1px 3px rgba(0,0,0,.5)}
+  width:20px;height:20px;border-radius:50%;background:var(--knob);transition:transform .18s;
+  box-shadow:0 1px 3px var(--shadow2)}
 .swrow label.sw>input:checked+.track{background:linear-gradient(120deg,var(--acc),var(--acc2))}
 .swrow label.sw>input:checked+.track::after{transform:translateX(20px)}
 .swrow label.sw .txt2{display:flex;flex-direction:column;gap:1px}
@@ -648,61 +693,70 @@ button.cancel:hover{background:#4a2c27}
 .ovprev{display:flex;gap:12px}
 .ovprev figcaption{font-size:11px;color:var(--dim);text-align:center;margin-top:5px;line-height:1.4}
 .ovframe{position:relative;width:124px;height:220px;border-radius:9px;overflow:hidden;
-  background:#0b0b0f;border:1px solid var(--line)}
+  background:var(--deep);border:1px solid var(--line)}
 .ovframe .ovbg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.8}
 .ovframe .ovart{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   height:auto;display:block}
 .ovframe .ovghost{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-  aspect-ratio:1;border:1px dashed #c8ccd4;border-radius:4px;
-  background:rgba(0,0,0,.55);box-shadow:0 0 0 1px rgba(0,0,0,.45);
+  aspect-ratio:1;border:1px dashed var(--txt2);border-radius:4px;
+  background:rgba(0,0,0,.55);box-shadow:0 0 0 1px var(--shadow);
   display:flex;align-items:center;justify-content:center;
-  font-size:9px;color:#e2e5ea;text-align:center;line-height:1.2}
+  font-size:9px;color:var(--txt2);text-align:center;line-height:1.2}
 .ovframe .ovempty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  font-size:11px;color:#5c616b;text-align:center;padding:0 10px}
+  font-size:11px;color:var(--faint);text-align:center;padding:0 10px}
 .drop .ico{font-size:34px;line-height:1}
-.drop .txt{font-weight:700;font-size:14px;color:#c9ced6}
-.drop img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+.drop .txt{font-weight:700;font-size:14px;color:var(--txt2)}
+.drop img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:var(--media)}
 .drop .clr{position:absolute;top:8px;right:8px;z-index:2;background:#000c;border:0;color:#fff;
   border-radius:8px;padding:3px 9px;cursor:pointer;font-size:14px;line-height:1.5}
 .upname{font-size:11px;color:var(--dim);margin-top:6px;min-height:15px;word-break:break-all}
 .thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .thumbs figure{position:relative;cursor:pointer}
-.thumbs img{width:74px;height:99px;object-fit:cover;border-radius:8px;background:#000;
+.thumbs img{width:74px;height:99px;object-fit:cover;border-radius:8px;background:var(--media);
 border:2px solid transparent;display:block}
-.thumbs figure.sel img{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,122,69,.25)}
+.thumbs figure.sel img{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-glow)}
 .thumbs figure.used img{opacity:.3}
 .thumbs figcaption{position:absolute;left:0;right:0;bottom:0;font-size:10px;text-align:center;
-background:rgba(0,0,0,.62);color:#fff;border-radius:0 0 6px 6px;padding:1px 0}
-.thumbs figure.sel figcaption{background:var(--acc);color:#1b0d05;font-weight:700}
-#bar{height:10px;background:#26262f;border-radius:5px;overflow:hidden;margin:10px 0 6px;display:none}
+background:var(--scrim);color:#fff;border-radius:0 0 6px 6px;padding:1px 0}
+.thumbs figure.sel figcaption{background:var(--acc);color:var(--on-acc);font-weight:700}
+#bar{height:10px;background:var(--track);border-radius:5px;overflow:hidden;margin:10px 0 6px;display:none}
 #bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .2s}
 #log{white-space:pre-wrap;font:12px/1.6 ui-monospace,Menlo,monospace;color:var(--dim);max-height:150px;overflow-y:auto;margin-top:8px}
 #doneRow{display:none;gap:10px;margin-top:10px}
 .hint{color:var(--dim);font-size:12px;margin-top:8px}
 #hitems{display:flex;flex-direction:column;gap:10px;margin-top:12px}
-.hrec{display:flex;gap:12px;background:#15151b;border:1px solid var(--line);
+.hrec{display:flex;gap:12px;background:var(--sunken);border:1px solid var(--line);
 border-radius:12px;padding:10px;align-items:center}
-.hrec img{width:78px;height:104px;object-fit:cover;border-radius:8px;background:#000;flex:0 0 auto}
+.hrec img{width:78px;height:104px;object-fit:cover;border-radius:8px;background:var(--media);flex:0 0 auto}
 .hrec .meta{flex:1;min-width:0}
 .hrec .nm{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hrec .sub{font-size:11px;color:var(--dim);margin-top:3px}
 .hrec .ops{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;max-width:280px}
 .badge{display:inline-block;font-size:10px;padding:1px 7px;border-radius:6px;
-background:#2c2c36;color:var(--dim);margin-right:6px}
-.badge.mv{background:#3a2a12;color:var(--acc2)}
-.alignbox{margin-top:10px;padding:10px;background:#111117;border:1px solid var(--line);
+background:var(--btn);color:var(--dim);margin-right:6px}
+.badge.mv{background:var(--badge-bg);color:var(--acc2)}
+.alignbox{margin-top:10px;padding:10px;background:var(--deep);border:1px solid var(--line);
 border-radius:10px;display:none}
 .alignbox.on{display:flex;gap:12px;align-items:flex-start}
-.alignbox img{width:150px;border-radius:8px;background:#000}
+.alignbox img{width:150px;border-radius:8px;background:var(--media)}
 .nudge{display:grid;grid-template-columns:repeat(3,34px);gap:4px}
 .nudge button{padding:4px 0;font-size:12px;border-radius:6px}
 .tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .tabs button{border-radius:10px;padding:9px 18px;white-space:nowrap;flex:0 0 auto}
-.tabs button.on{background:linear-gradient(120deg,var(--acc),var(--acc2));color:#1b0d05;border:none;font-weight:700}
+.tabs button.on{background:linear-gradient(120deg,var(--acc),var(--acc2));color:var(--on-acc);border:none;font-weight:700}
 .mode{display:none}.mode.on{display:block}
-#planBox{background:#15151b;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--dim);margin-top:10px;display:none}
+#planBox{background:var(--sunken);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--dim);margin-top:10px;display:none}
 </style></head><body>
-<h1><span class="logo"></span>CutKit <small>视频运营工具箱</small></h1>
+<h1><span class="logo"></span>CutKit <small>视频运营工具箱</small>
+<span class="topbar">
+  <button class="small" id="themeBtn" onclick="toggleTheme()" title="日夜切换"></button>
+  <select id="accentSel" class="mini" onchange="setAccent(this.value)">
+    <option value="orange">橙</option><option value="blue">蓝</option>
+    <option value="violet">紫</option><option value="green">绿</option>
+    <option value="rose">玫红</option><option value="mono">灰</option></select>
+  <select id="langSel" class="mini" onchange="setLang(this.value)"></select>
+</span></h1>
+<div class="row shortcuts"><span class="dzhint">快捷入口</span><!--SHORTCUTS--></div>
 
 <div class="tabs">
 <button id="tabPairs" class="on" onclick="setMode('pairs')">前后对比</button>
@@ -898,7 +952,7 @@ border-radius:10px;display:none}
 <div class="grid">
 <div style="grid-column:1/3"><label>顶部标题（粉色药丸，留空则不加）</label>
 <input id="demoCaption" value="Upload Your Photo"></div>
-<div><label>标题样式</label><select id="demoCaptionStyle"><option value="pill_pink">粉色药丸</option><option value="pill_black">黑色药丸</option><option value="pill_white">白色药丸</option><option value="pill_yellow">黄色药丸</option><option value="rect_black">黑色方块</option><option value="outline">白字黑描边</option><option value="outline_pink">粉字白描边</option><option value="shadow">白字投影</option></select></div>
+<div><label>标题样式</label><select id="demoCaptionStyle"><!--CAPTION_STYLE_OPTIONS--></select></div>
 <div><label>动画风格</label><select id="demoMotion" onchange="demoMotionChanged()">
 <option value="slide">飞入落框（复刻参考片）</option>
 <option value="drag">光标拖拽（任意比例自适应）</option></select></div>
@@ -1139,19 +1193,7 @@ border-radius:10px;display:none}
 <option value="wipe">手指擦除</option></select></div>
 <div><label>对比片段之间</label><select id="ad_transition">
 <option value="spin">旋转模糊</option><option value="none">直切</option></select></div>
-<div><label>段落之间的转场</label><select id="ad_seg_trans" onchange="adSegTransChanged()">
-<option value="none">无（硬切）</option>
-<option value="fadeblack" selected>闪黑</option>
-<option value="fadewhite">闪白</option>
-<option value="dissolve">叠化</option>
-<option value="fade">淡入淡出</option>
-<option value="hblur">模糊</option>
-<option value="zoomin">放大</option>
-<option value="circleopen">圆形展开</option>
-<option value="radial">径向</option>
-<option value="pixelize">像素化</option>
-<option value="slideleft">左滑</option>
-<option value="wipeleft">左擦除</option></select></div>
+<div><label>段落之间的转场</label><select id="ad_seg_trans" onchange="adSegTransChanged()"><!--SEG_TRANSITION_OPTIONS--></select></div>
 <div><label>转场时长 <span id="ad_seg_secL">0.50</span> 秒</label>
 <input type="range" id="ad_seg_sec" min="0.1" max="1.5" step="0.05" value="0.5"
        oninput="adSegTransChanged()" style="width:100%"></div>
@@ -1254,9 +1296,9 @@ function alignChanged(){
   $('alignFill').disabled=!on;
   $('swFill').classList.toggle('dim',!on);   // 只灰掉从属项；开关自己要始终可点回来
   document.querySelectorAll('.alignbtn').forEach(b=>{b.disabled=!on;});
-  $('alignHint').textContent = on
+  $('alignHint').textContent = tr(on
     ? '生成时会先把两张图的人物对到一起；逐对可点「◎ 对齐」查看并手动微调。'
-    : '已关闭：两张图按原样直接用，不做任何位移缩放，逐对微调也不生效。';
+    : '已关闭：两张图按原样直接用，不做任何位移缩放，逐对微调也不生效。');
   if(!on){document.querySelectorAll('.alignbox.on').forEach(b=>b.classList.remove('on'));return;}
   document.querySelectorAll('.alignbox.on').forEach(b=>{
     const i=parseInt(b.id.slice(2),10); loadAlign(i);});
@@ -1337,7 +1379,7 @@ function slotId(g,k){return 'drop'+k+g;}
 function renderGroups(){
   const el=$('upGroups'); el.innerHTML='';
   for(let g=0;g<GROUPS;g++){
-    const tag=GROUPS>1?` <span>· 第 ${g+1} 组</span>`:'';
+    const tag=GROUPS>1?` <span>${tp('· 第 {} 组', g+1)}</span>`:'';
     const d=document.createElement('div');
     d.className='uprow'; if(g)d.style.marginTop='16px';
     d.innerHTML=`
@@ -1382,7 +1424,7 @@ function paintSlot(g,k){
   const el=$(slotId(g,k)); if(!el)return;
   const p=(SLOTS[g]||{})[k]||'';
   el.innerHTML = p
-    ? `<img src="${thumb(p)}"><button class="clr" title="移除" onclick="event.stopPropagation();clearSlot(${g},'${k}')">✕</button>`
+    ? `<img src="${thumb(p)}"><button class="clr" title="${tr('移除')}" onclick="event.stopPropagation();clearSlot(${g},'${k}')">✕</button>`
     : `<div class="ico">🖼️</div><div class="txt">Upload photo or drag &amp; drop</div>`;
   const nm=$('name'+k+g); if(nm)nm.textContent = p ? disp(p) : '';
 }
@@ -1484,12 +1526,12 @@ function mb(n){return n>=1073741824?(n/1073741824).toFixed(2)+' GB':(n/1048576).
 async function dzTake(zid,file){
   const spec=DZ[zid]; if(!spec||!file)return;
   if(!dzKindOk(file,spec.kind)){
-    dzSay(spec.status,`这里只能放${DZ_LABEL[spec.kind]}文件`); return;
+    dzSay(spec.status,tp('这里只能放{}文件', tr(DZ_LABEL[spec.kind]))); return;
   }
   const big=file.size>8*1048576;
-  dzSay(spec.status, big?`读取中… 0% (${mb(file.size)})`:'读取中…');
+  dzSay(spec.status, big?tp('读取中… {}% ({})', 0, mb(file.size)):'读取中…');
   const r=await uploadStream(file,spec.kind,(a,b)=>{
-    if(big)dzSay(spec.status,`读取中… ${Math.round(100*a/b)}% (${mb(b)})`);
+    if(big)dzSay(spec.status,tp('读取中… {}% ({})', Math.round(100*a/b), mb(b)));
   });
   if(r.error){dzSay(spec.status,r.error);return;}
   if(r.name)NAMES[r.path]=r.name;
@@ -1529,10 +1571,10 @@ function wireModeFallback(modeId,mode){
 
 // ---------- 取消生成 ----------
 async function cancelRun(){
-  document.querySelectorAll('button.cancel').forEach(b=>{b.disabled=true;b.textContent='取消中…';});
+  document.querySelectorAll('button.cancel').forEach(b=>{b.disabled=true;b.textContent=tr('取消中…');});
   const r=await post('/cancel');
   if(!r.ok){
-    document.querySelectorAll('button.cancel').forEach(b=>{b.disabled=false;b.textContent='取消生成';});
+    document.querySelectorAll('button.cancel').forEach(b=>{b.disabled=false;b.textContent=tr('取消生成');});
   }
 }
 
@@ -1671,6 +1713,72 @@ function wireNumPairs(){
   numPair('ad_seg_sec', 0.1, 1.5, 0.05, 'ad_seg_secL');
 }
 
+// ---------- 主题与语言 ----------
+let THEME='dark', ACCENT='orange', LANG='zh', I18N={}, LANGS=[['zh','中文']];
+function applyTheme(){
+  document.documentElement.setAttribute('data-theme', THEME);
+  document.documentElement.setAttribute('data-accent', ACCENT);
+  const b=$('themeBtn'); if(b)b.textContent = THEME==='dark' ? '🌙' : '☀️';
+  const a=$('accentSel'); if(a)a.value=ACCENT;
+}
+function toggleTheme(){
+  THEME = THEME==='dark' ? 'light' : 'dark';
+  applyTheme(); post('/save_settings',{theme:THEME});
+}
+function setAccent(v){ ACCENT=v; applyTheme(); post('/save_settings',{accent:v}); }
+
+// 词表以中文原文为键，所以页面不用打任何标记：遍历文本节点直接换。
+// 换之前先把原文记在节点上，切回中文时能还原。
+function walkText(node, fn){
+  for(let n=node.firstChild; n; n=n.nextSibling){
+    if(n.nodeType===3) fn(n);
+    else if(n.nodeType===1 && n.tagName!=='SCRIPT' && n.tagName!=='STYLE') walkText(n, fn);
+  }
+}
+function tr(zh){
+  if(LANG==='zh')return zh;
+  const d=I18N[LANG]||{}; return d[zh]!==undefined ? d[zh] : zh;
+}
+function applyLang(){
+  walkText(document.body, n=>{
+    if(n.__zh===undefined){
+      if(!/[\u4e00-\u9fff]/.test(n.nodeValue))return;   // 只记有中文的节点
+      n.__zh=n.nodeValue;
+    }
+    const raw=n.__zh, t=raw.trim();
+    if(!t)return;
+    n.nodeValue = raw.replace(t, tr(t));
+  });
+  document.querySelectorAll('[placeholder]').forEach(e=>{
+    if(e.__zhph===undefined){
+      if(!/[\u4e00-\u9fff]/.test(e.placeholder))return;
+      e.__zhph=e.placeholder;
+    }
+    e.placeholder=tr(e.__zhph);
+  });
+  document.documentElement.lang = LANG;
+  const sel=$('langSel'); if(sel)sel.value=LANG;
+}
+function tp(zh, ...args){          // 带 {} 占位符的模板，供 JS 拼出来的串用
+  let i=0;
+  return tr(zh).replace(/\{\}/g, ()=> args[i++]);
+}
+function setLang(v){ LANG=v; applyLang(); post('/save_settings',{lang:v}); }
+async function openShortcut(i){ await post('/open_shortcut',{i:i}); }
+
+// 配对列表、预设下拉这些是 JS 现生成的，靠观察器补翻。
+// applyLang 只改 nodeValue（characterData），这里只观察 childList，不会自我触发。
+let langPending=false;
+function watchLang(){
+  new MutationObserver(()=>{
+    if(langPending)return;
+    langPending=true;
+    // 用 setTimeout 不用 rAF —— 窗口被切到后台时 rAF 不触发，
+    // 那时正好是渲染完把结果写进列表的时刻，翻译就会漏掉。
+    setTimeout(()=>{ langPending=false; applyLang(); }, 0);
+  }).observe(document.body,{childList:true,subtree:true});
+}
+
 // ---------- 广告成片 ----------
 let AD_GROUPS=2, AD_SLOTS=[{B:'',A:''},{B:'',A:''}];
 let ADPHOTO='', ADRESULT='', ADENDING='', ADBGM='';
@@ -1682,10 +1790,10 @@ function renderAdGroups(){
     const d=document.createElement('div');
     d.className='uprow'; if(g)d.style.marginTop='14px';
     d.innerHTML=`
-      <div class="upcol"><label>Before <span>· 第 ${g+1} 组</span></label>
+      <div class="upcol"><label>Before <span>${tp('· 第 {} 组', g+1)}</span></label>
         <div class="drop" id="adDropB${g}" onclick="pickAdInto(${g},'B')"></div>
         <div class="upname" id="adNameB${g}"></div></div>
-      <div class="upcol"><label>After <span>· 第 ${g+1} 组</span></label>
+      <div class="upcol"><label>After <span>${tp('· 第 {} 组', g+1)}</span></label>
         <div class="drop" id="adDropA${g}" onclick="pickAdInto(${g},'A')"></div>
         <div class="upname" id="adNameA${g}"></div></div>`;
     el.appendChild(d);
@@ -1706,7 +1814,7 @@ function paintAdSlot(g,k){
   const el=$(adSlotId(g,k)); if(!el)return;
   const p=(AD_SLOTS[g]||{})[k]||'';
   el.innerHTML = p
-    ? `<img src="${thumb(p)}"><button class="clr" title="移除" onclick="event.stopPropagation();clearAdSlot(${g},'${k}')">✕</button>`
+    ? `<img src="${thumb(p)}"><button class="clr" title="${tr('移除')}" onclick="event.stopPropagation();clearAdSlot(${g},'${k}')">✕</button>`
     : `<div class="ico">🖼️</div><div class="txt">Upload photo or drag &amp; drop</div>`;
   const nm=$('adName'+k+g); if(nm)nm.textContent = p ? disp(p) : '';
 }
@@ -1734,9 +1842,9 @@ function adSegTransChanged(){
   const on = $('ad_seg_trans').value !== 'none';
   $('ad_seg_sec').disabled = !on;
   $('ad_seg_secL').textContent = parseFloat($('ad_seg_sec').value).toFixed(2);
-  $('adSegHint').textContent = on
+  $('adSegHint').textContent = tr(on
     ? '转场加在「对比段 → 演示」和「演示 → 定格」两处；成片总长会自动补偿，仍然贴合 BGM。'
-    : '段落之间直接硬切。';
+    : '段落之间直接硬切。');
 }
 function adPairs(){return AD_SLOTS.filter(s=>s.B&&s.A).map(s=>[s.B,s.A]);}
 function adSyncReady(){
@@ -1748,7 +1856,7 @@ function adSyncReady(){
     if(!adPairs().length)miss.push('至少一组完整的前后图');
     if(!ADPHOTO)miss.push('演示原图');
     if(!ADBGM)miss.push('BGM');
-    h.textContent = miss.length ? '还缺：'+miss.join('、') : '';
+    h.textContent = miss.length ? tr('还缺：')+miss.map(tr).join(tr('、')) : '';
   }
 }
 async function pickAdPhoto(){const r=await post('/pick_image',{prompt:'选择演示原图'});
@@ -1781,7 +1889,7 @@ async function runAd(){
 async function pollAd(){
   const s=await post('/status');
   if(s.total>0){$('fillAd').style.width=(100*s.done_n/s.total).toFixed(1)+'%';
-    $('progAd').textContent=`渲染中 ${s.done_n}/${s.total} 帧`;}
+    $('progAd').textContent=tp('渲染中 {}/{} 帧', s.done_n, s.total);}
   $('logAd').textContent=s.lines.join('\n');
   $('logAd').scrollTop=$('logAd').scrollHeight;
   if(s.done){
@@ -1810,7 +1918,7 @@ function renderPairPresets(){
     names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
   if(names.includes(keep))sel.value=keep;
   $('pairPresetHint').textContent = names.length
-    ? '' : '把常用的一套参数（含对齐开关）存下来，换片型时一键切回。';
+    ? '' : tr('把常用的一套参数（含对齐开关）存下来，换片型时一键切回。');
 }
 function applyPairPreset(){
   const n=$('pairPreset').value; if(!n)return;
@@ -1819,7 +1927,7 @@ function applyPairPreset(){
   if(p.align_on!==undefined)$('alignOn').checked=!!p.align_on;
   if(p.align_fill!==undefined)$('alignFill').checked=!!p.align_fill;
   alignChanged(); syncReveal(); syncNumPairs();
-  $('pairPresetHint').textContent=`已套用：${n}`;
+  $('pairPresetHint').textContent=tp('已套用：{}', n);
 }
 async function savePairPreset(){
   const n=$('pairPresetName').value.trim();
@@ -1828,13 +1936,13 @@ async function savePairPreset(){
   if(r.error){$('pairPresetHint').textContent=r.error;return;}
   PPRESETS=r; $('pairPresetName').value='';
   renderPairPresets(); $('pairPreset').value=n;
-  $('pairPresetHint').textContent=`已保存：${n}`;
+  $('pairPresetHint').textContent=tp('已保存：{}', n);
 }
 async function delPairPreset(){
   const n=$('pairPreset').value; if(!n)return;
   PPRESETS=await post('/pair_preset_delete',{name:n});
   $('pairPreset').value=''; renderPairPresets();
-  $('pairPresetHint').textContent=`已删除：${n}`;
+  $('pairPresetHint').textContent=tp('已删除：{}', n);
 }
 
 // ---------- 叠加素材：尺寸可视化 ----------
@@ -1895,7 +2003,7 @@ function renderOvPresets(){
   if(ROV.last&&ROV.presets[ROV.last])sel.value=ROV.last;
   $('ovPresetHint').textContent = names.length
     ? (ROV.last?`当前：${ROV.last}（最近保存的一份，已自动选中）`:'')
-    : '把常用的素材 + 大小存成预设，下次打开自动选最近保存的那份。';
+    : tr('把常用的素材 + 大小存成预设，下次打开自动选最近保存的那份。');
 }
 async function applyRosieOvPreset(){
   const n=$('rosieOvPreset').value; if(!n)return;
@@ -1906,7 +2014,7 @@ async function applyRosieOvPreset(){
   if(r.ov)ROV=r.ov;
   syncNumPairs();
   renderRosieAssets(); ovArt();
-  $('ovPresetHint').textContent=`已套用预设：${n}`;
+  $('ovPresetHint').textContent=tp('已套用预设：{}', n);
 }
 async function saveRosieOvPreset(){
   const n=$('rosieOvName').value.trim();
@@ -1915,13 +2023,13 @@ async function saveRosieOvPreset(){
   if(r.error){$('ovPresetHint').textContent=r.error;return;}
   ROV=r.ov||ROV; RASSETS=r.assets||RASSETS;
   $('rosieOvName').value=''; renderOvPresets(); $('rosieOvPreset').value=n;
-  $('ovPresetHint').textContent=`已保存预设：${n}（下次打开默认选它）`;
+  $('ovPresetHint').textContent=tp('已保存预设：{}（下次打开默认选它）', n);
 }
 async function delRosieOvPreset(){
   const n=$('rosieOvPreset').value; if(!n)return;
   const r=await post('/rosie_ov_delete',{name:n});
   ROV=r.ov||ROV; renderOvPresets();
-  $('ovPresetHint').textContent=`已删除预设：${n}`;
+  $('ovPresetHint').textContent=tp('已删除预设：{}', n);
 }
 function applyRosiePreset(){
   const p=RPRESETS[$('rosiePreset').value]; if(!p)return;
@@ -1992,7 +2100,7 @@ async function loadHist(){
   $('jyHint').innerHTML = r.jy_app
     ? '剪映的草稿素材表是加密的、且它没有文件打开接口，所以没法由程序直接写进素材库。这里改成把成片放进上面这个文件夹 —— 剪映里 <b>导入 → 素材</b> 定位一次之后，之后每次文件框都停在这，一步就能选。'
     : '没检测到剪映专业版；仍可把成片收进这个文件夹备用。';
-  $('histCount').textContent = HREC.length ? `共 ${HREC.length} 条` : '还没有生成记录';
+  $('histCount').textContent = HREC.length ? tp('共 {} 条', HREC.length) : '还没有生成记录';
   const el=$('hitems'); el.innerHTML='';
   HREC.forEach(r=>{
     const d=document.createElement('div'); d.className='hrec';
@@ -2058,7 +2166,7 @@ const REVEAL_HINT={
   grid:'多张图同屏，逐格从 Before 翻成 After。9 对=3×3，6 对=3×2，4 对=2×2，2/3 对=竖排。一次修一堆，冲收藏。'};
 function syncReveal(){
   const v=$('slider').value;
-  $('revealHint').textContent=REVEAL_HINT[v]||'';
+  $('revealHint').textContent=tr(REVEAL_HINT[v]||'');
   for(const c of ['rvcomment','rvprogress'])
     document.querySelectorAll('.'+c).forEach(e=>{
       e.style.display=(c==='rv'+v)?'':'none';});
@@ -2145,7 +2253,7 @@ async function runDemo(){
 async function pollDemo(){
   const s=await post('/status');
   if(s.total>0){$('fill3').style.width=(100*s.done_n/s.total).toFixed(1)+'%';
-    $('prog3').textContent=`渲染中 ${s.done_n}/${s.total} 帧`;}
+    $('prog3').textContent=tp('渲染中 {}/{} 帧', s.done_n, s.total);}
   $('log3').textContent=s.lines.join('\n');
   $('log3').scrollTop=$('log3').scrollHeight;
   if(s.done){
@@ -2203,7 +2311,7 @@ async function pollScreen(){
   const s=await post('/status');
   if(s.kind==='analyze'&&s.total>0){
     $('fill2').style.width=(100*s.done_n/s.total).toFixed(1)+'%';
-    $('prog2').textContent=`分析中 ${s.done_n}/${s.total}`;
+    $('prog2').textContent=tp('分析中 {}/{}', s.done_n, s.total);
   }
   if(s.kind==='screen'){$('fill2').style.width=s.done?'100%':'60%';}
   $('log2').textContent=s.lines.join('\n');
@@ -2244,7 +2352,7 @@ async function poll(){
   const s=await post('/status');
   if(s.total>0){
     $('fill').style.width=(100*s.done_n/s.total).toFixed(1)+'%';
-    $('prog').textContent=`渲染中 ${s.done_n}/${s.total} 帧`;
+    $('prog').textContent=tp('渲染中 {}/{} 帧', s.done_n, s.total);
   }
   $('log').textContent=s.lines.join('\n');
   $('log').scrollTop=$('log').scrollHeight;
@@ -2263,6 +2371,10 @@ async function poll(){
   if(s.demo_caption_style)$('demoCaptionStyle').value=s.demo_caption_style;
   if(s.audio){AUDIO=s.audio;$('audioName').textContent=base(AUDIO);$('audioName2').textContent=base(AUDIO);}
   // 上传框组数：记住上次用的，默认 2 组
+  THEME=s.theme||'dark'; ACCENT=s.accent||'orange'; LANG=s.lang||'zh';
+  I18N=s.i18n||{}; LANGS=s.langs||[['zh','中文']];
+  $('langSel').innerHTML=LANGS.map(([c,n])=>`<option value="${c}">${n}</option>`).join('');
+  applyTheme();
   const gn=parseInt(s.pair_groups,10);
   GROUPS=(gn>=1&&gn<=MAX_GROUPS)?gn:2;
   SLOTS=Array.from({length:GROUPS},()=>({B:'',A:''}));
@@ -2281,13 +2393,44 @@ async function poll(){
   setInterval(()=>{
     document.querySelectorAll('button.cancel').forEach(b=>{
       b.style.display=BUSY?'':'none';
-      if(!BUSY){b.disabled=false;b.textContent='取消生成';}
+      if(!BUSY){b.disabled=false;b.textContent=tr('取消生成');}
     });
   },200);
+  applyLang(); watchLang();
   setInterval(()=>post('/ping'),5000);
 })();
 </script>
 </body></html>"""
+
+
+SHORTCUTS = [
+    ("AI 视频 · 模板", "https://www.fotor.com/apps/ai-video-generator/#from-template"),
+    ("AI 视频 · 新建", "https://www.fotor.com/apps/ai-video-generator/#from-create"),
+    ("AI 视频 · Magic Sync", "https://www.fotor.com/apps/ai-video-generator/#from-magic-sync"),
+    ("AI 图片创作", "https://www.fotor.com/images/create/"),
+]
+
+
+def _options(items, selected=None):
+    """从源表生成 <option>，别再手抄一份到 HTML 里 —— 抄了就会和源表走散。"""
+    out = []
+    for key, label in items:
+        sel = " selected" if key == selected else ""
+        out.append(f'<option value="{key}"{sel}>{label}</option>')
+    return "".join(out)
+
+
+def render_page():
+    """把页面里的下拉占位符按当前源表填上。"""
+    shortcuts = "".join(
+        f'<button class="small" onclick="openShortcut({i})">{label}</button>'
+        for i, (label, _) in enumerate(SHORTCUTS))
+    return (PAGE
+            .replace("<!--SHORTCUTS-->", shortcuts)
+            .replace("<!--CAPTION_STYLE_OPTIONS-->",
+                     _options([(k, lab) for k, lab, _ in dragdemo.CAPTION_STYLES]))
+            .replace("<!--SEG_TRANSITION_OPTIONS-->",
+                     _options(adcut.SEG_TRANSITIONS, selected="fadeblack")))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2308,7 +2451,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/" or self.path.startswith("/index"):
-            body = PAGE.encode()
+            body = render_page().encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -2583,7 +2726,20 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/settings":
             r = load_settings()
             r["pair_presets"] = pair_presets_load()
+            r["langs"] = i18n.LANGS
+            r["i18n"] = {code: i18n.table(code) for code, _ in i18n.LANGS}
             self._json(r)
+        elif self.path == "/open_shortcut":
+            try:
+                idx = int(self._read().get("i"))
+            except (TypeError, ValueError):
+                idx = -1
+            if not (0 <= idx < len(SHORTCUTS)):
+                self._json({"error": "未知入口"})
+                return
+            import webbrowser
+            webbrowser.open(SHORTCUTS[idx][1])          # 用系统浏览器开，不占应用窗口
+            self._json({"ok": True})
         elif self.path == "/save_settings":
             save_settings(self._read())
             self._json({"ok": True})
