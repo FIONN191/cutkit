@@ -50,7 +50,8 @@ SETTING_KEYS = ("jy_auto", "jy_dir",
                 "caption", "caption_size", "label_before", "label_after",
                 "scene_sec", "transition", "slider", "audio", "demo_caption",
                 "comment_user", "comment_text", "progress_text", "direction",
-                "pair_groups", "demo_caption_style",
+                "pair_groups", "demo_caption_style", "demo_caption_y",
+                "demo_font", "demo_duration", "demo_motion",
                 "theme", "accent", "lang")
 DEFAULT_SETTINGS = {
     "jy_auto": "", "jy_dir": "",
@@ -63,6 +64,8 @@ DEFAULT_SETTINGS = {
     "progress_text": "Removing filter",
     "direction": "rtl",
     "pair_groups": "2", "theme": "dark", "accent": "orange", "lang": "zh",
+    "demo_caption_style": "plain", "demo_caption_y": "18.5",
+    "demo_font": "system", "demo_duration": "1.9", "demo_motion": "drag",
 }
 
 
@@ -531,7 +534,10 @@ def worker_demo(photo, result, caption, out, opts=None):
                           transparent=o.get("transparent", False),
                           cursor=o.get("cursor"), sound=o.get("sound", False),
                           use_transition=o.get("use_transition", True),
-                          caption_style=o.get("caption_style", "pill_pink"),
+                          caption_style=o.get("caption_style", "plain"),
+                          caption_y=o.get("caption_y", dragdemo.CAPTION_Y),
+                          caption_font_key=o.get("caption_font_key", "system"),
+                          duration=o.get("duration"),
                           progress=prog, log=log).render()
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, out=out)
@@ -663,6 +669,11 @@ button.cancel:hover{background:var(--danger-hi)}
 .topbar .mini{width:auto;min-width:74px;padding:4px 8px;font-size:12px}
 .topbar #themeBtn{padding:4px 10px;font-size:14px;line-height:1.2}
 .shortcuts{margin:-6px 0 14px}
+.capwrap{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+.capctl{flex:1;min-width:340px}
+.cappv{flex:0 0 auto}
+.cappv img{width:150px;border-radius:10px;border:1px solid var(--line);background:var(--media);display:block}
+.cappv figcaption{font-size:11px;color:var(--dim);text-align:center;margin-top:5px;line-height:1.4}
 .numpair{display:flex;align-items:center;gap:9px}
 .numpair input[type=range]{flex:1;min-width:64px}
 .numpair .numbox{flex:0 0 auto;width:76px;text-align:center;padding:6px 4px}
@@ -949,24 +960,37 @@ border-radius:10px;display:none}
 
 <div class="card">
 <h2>② 参数</h2>
+<div class="capwrap">
+<div class="capctl">
 <div class="grid">
-<div style="grid-column:1/3"><label>顶部标题（粉色药丸，留空则不加）</label>
-<input id="demoCaption" value="Upload Your Photo"></div>
-<div><label>标题样式</label><select id="demoCaptionStyle"><!--CAPTION_STYLE_OPTIONS--></select></div>
+<div style="grid-column:1/3"><label>顶部标题（留空则不加）</label>
+<input id="demoCaption" value="Upload Your Photo" oninput="capPreview()"></div>
+<div><label>标题样式</label>
+<select id="demoCaptionStyle" onchange="capPreview()"><!--CAPTION_STYLE_OPTIONS--></select></div>
+<div><label>字体</label><select id="demoFont" onchange="capPreview()"><!--FONT_OPTIONS--></select></div>
+<div style="grid-column:2/4"><label>标题竖直位置 <span id="capYL">18.5</span>%</label>
+<input type="range" id="demoCaptionY" min="4" max="80" step="0.5" value="18.5"
+       oninput="capPreview()" style="width:100%"></div>
 <div><label>动画风格</label><select id="demoMotion" onchange="demoMotionChanged()">
-<option value="slide">飞入落框（复刻参考片）</option>
-<option value="drag">光标拖拽（任意比例自适应）</option></select></div>
-<div style="grid-column:1/4"><label>输出与效果</label>
+<option value="drag">光标拖拽（任意比例自适应）</option>
+<option value="slide">飞入落框（复刻参考片）</option></select></div>
+<div><label>速度预设</label><select id="demoSpeed" onchange="demoSpeedChanged()"><!--SPEED_OPTIONS--></select></div>
+<div><label>成片时长（秒）</label><input id="demoDur" value="1.9"></div>
+</div>
+<div style="margin-top:10px"><label style="font-size:12px;color:var(--dim);display:block;margin-bottom:3px">输出与效果</label>
 <div class="row">
 <label class="row" style="gap:6px;font-size:14px;color:var(--txt)">
 <input type="checkbox" id="demoTransparent" style="width:auto" onchange="demoTransChanged()"> 透明底 MOV（可直接盖在自己的视频上）</label>
 <label class="row" style="gap:6px;font-size:14px;color:var(--txt)">
 <input type="checkbox" id="demoTrans2" checked style="width:auto"> 叠 Fotor 转场</label>
 <label class="row" style="gap:6px;font-size:14px;color:var(--txt)">
-<input type="checkbox" id="demoCursor" style="width:auto"> 鼠标指针</label>
+<input type="checkbox" id="demoCursor" checked style="width:auto"> 鼠标指针</label>
 <label class="row" style="gap:6px;font-size:14px;color:var(--txt)">
-<input type="checkbox" id="demoSound" style="width:auto"> 拖拽音效</label>
+<input type="checkbox" id="demoSound" checked style="width:auto"> 拖拽音效</label>
 </div></div>
+</div>
+<figure class="cappv"><img id="capPv" alt="">
+<figcaption>标题位置预览<br>（真实字体与样式）</figcaption></figure>
 </div>
 <div class="hint" id="demoHint2">透明 MOV 不含黑底和标题药丸，只有虚线框 + 照片卡片 + 光标，方便在剪映/CapCut 里叠到任意画面上。</div>
 </div>
@@ -1713,6 +1737,24 @@ function wireNumPairs(){
   numPair('ad_seg_sec', 0.1, 1.5, 0.05, 'ad_seg_secL');
 }
 
+// ---------- 拖照片演示：标题预览与速度 ----------
+let capTimer=null;
+function capPreview(){
+  const y=parseFloat($('demoCaptionY').value)/100;
+  $('capYL').textContent=parseFloat($('demoCaptionY').value).toFixed(1);
+  clearTimeout(capTimer);
+  capTimer=setTimeout(()=>{                       // 拖滑杆时别每一帧都请求
+    const q=new URLSearchParams({y:y, text:$('demoCaption').value,
+      style:$('demoCaptionStyle').value, font:$('demoFont').value, t:Date.now()});
+    $('capPv').src='/caption_preview?'+q.toString();
+  },120);
+}
+const SPEED_SEC={};
+function demoSpeedChanged(){
+  const v=SPEED_SEC[$('demoSpeed').value];
+  if(v)$('demoDur').value=v;
+}
+
 // ---------- 主题与语言 ----------
 let THEME='dark', ACCENT='orange', LANG='zh', I18N={}, LANGS=[['zh','中文']];
 function applyTheme(){
@@ -1765,6 +1807,14 @@ function tp(zh, ...args){          // 带 {} 占位符的模板，供 JS 拼出�
 }
 function setLang(v){ LANG=v; applyLang(); post('/save_settings',{lang:v}); }
 async function openShortcut(i){ await post('/open_shortcut',{i:i}); }
+async function renameShortcut(i){
+  const btns=[...document.querySelectorAll('.shortcuts button')];
+  const cur=btns[i]?btns[i].textContent.trim():'';
+  const name=prompt(tr('给这个入口起个名字（留空恢复默认）'), cur);
+  if(name===null)return;
+  const r=await post('/rename_shortcut',{i:i,name:name});
+  if(r.shortcuts)r.shortcuts.forEach(([lab],k)=>{ if(btns[k])btns[k].textContent=lab; });
+}
 
 // 配对列表、预设下拉这些是 JS 现生成的，靠观察器补翻。
 // applyLang 只改 nodeValue（characterData），这里只观察 childList，不会自我触发。
@@ -2242,6 +2292,8 @@ async function runDemo(){
     motion:$('demoMotion').value, transparent:$('demoTransparent').checked,
     cursor:$('demoCursor').checked, sound:$('demoSound').checked,
     caption_style:$('demoCaptionStyle').value,
+    caption_y:$('demoCaptionY').value, caption_font:$('demoFont').value,
+    duration:$('demoDur').value,
     use_transition:$('demoTrans2').checked});
   if(r.error){$('prog3').textContent=r.error;return;}
   BUSY=true;$('goDemo').disabled=true;
@@ -2369,6 +2421,12 @@ async function poll(){
     if(s[k]!==undefined&&s[k]!=='')$(k).value=s[k];
   if(s.demo_caption)$('demoCaption').value=s.demo_caption;
   if(s.demo_caption_style)$('demoCaptionStyle').value=s.demo_caption_style;
+  if(s.demo_caption_y)$('demoCaptionY').value=s.demo_caption_y;
+  if(s.demo_font)$('demoFont').value=s.demo_font;
+  if(s.demo_duration)$('demoDur').value=s.demo_duration;
+  if(s.demo_motion)$('demoMotion').value=s.demo_motion;
+  (s.speed_presets||[]).forEach(([k,,sec])=>{SPEED_SEC[k]=sec;});
+  capPreview();
   if(s.audio){AUDIO=s.audio;$('audioName').textContent=base(AUDIO);$('audioName2').textContent=base(AUDIO);}
   // 上传框组数：记住上次用的，默认 2 组
   THEME=s.theme||'dark'; ACCENT=s.accent||'orange'; LANG=s.lang||'zh';
@@ -2420,6 +2478,50 @@ SHORTCUTS = [
 ]
 
 
+SHORTCUT_NAMES_PATH = os.path.join(app_support_dir(), "shortcut_names.json")
+
+
+def shortcuts_load():
+    """返回 [[显示名, 网址], ...]。改过名的用自定义名，其余用内置默认名。"""
+    try:
+        with open(SHORTCUT_NAMES_PATH) as f:
+            names = json.load(f)
+    except Exception:
+        names = {}
+    out = []
+    for i, (label, url) in enumerate(SHORTCUTS):
+        custom = names.get(str(i)) if isinstance(names, dict) else None
+        out.append([custom or label, url])
+    return out
+
+
+def shortcut_rename(idx, name):
+    try:
+        with open(SHORTCUT_NAMES_PATH) as f:
+            names = json.load(f)
+        if not isinstance(names, dict):
+            names = {}
+    except Exception:
+        names = {}
+    name = (name or "").strip()[:24]
+    if name:
+        names[str(idx)] = name
+    else:
+        names.pop(str(idx), None)      # 清空 = 恢复默认名
+    os.makedirs(app_support_dir(), exist_ok=True)
+    with open(SHORTCUT_NAMES_PATH, "w") as f:
+        json.dump(names, f, ensure_ascii=False, indent=1)
+    return shortcuts_load()
+
+
+def _clamp_float(v, dflt, lo, hi):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return dflt
+    return max(lo, min(hi, f))
+
+
 def _options(items, selected=None):
     """从源表生成 <option>，别再手抄一份到 HTML 里 —— 抄了就会和源表走散。"""
     out = []
@@ -2432,12 +2534,19 @@ def _options(items, selected=None):
 def render_page():
     """把页面里的下拉占位符按当前源表填上。"""
     shortcuts = "".join(
-        f'<button class="small" onclick="openShortcut({i})">{label}</button>'
-        for i, (label, _) in enumerate(SHORTCUTS))
+        f'<button class="small" onclick="openShortcut({i})" '
+        f'oncontextmenu="renameShortcut({i});return false" '
+        f'title="右键改名">{label}</button>'
+        for i, (label, _) in enumerate(shortcuts_load()))
     return (PAGE
             .replace("<!--SHORTCUTS-->", shortcuts)
             .replace("<!--CAPTION_STYLE_OPTIONS-->",
-                     _options([(k, lab) for k, lab, _ in dragdemo.CAPTION_STYLES]))
+                     _options([(k, lab) for k, lab, _ in dragdemo.CAPTION_STYLES],
+                              selected="plain"))
+            .replace("<!--FONT_OPTIONS-->",
+                     _options([(k, lab) for k, lab, _ in dragdemo.FONTS]))
+            .replace("<!--SPEED_OPTIONS-->",
+                     _options([(k, lab) for k, lab, _ in dragdemo.SPEED_PRESETS]))
             .replace("<!--SEG_TRANSITION_OPTIONS-->",
                      _options(adcut.SEG_TRANSITIONS, selected="fadeblack")))
 
@@ -2486,6 +2595,37 @@ class Handler(BaseHTTPRequestHandler):
                     return
             self.send_response(200)
             self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path.startswith("/caption_preview?"):
+            # 直接用真正的渲染函数出图，所见即所得（字体/样式/位置都是成片里的那套）
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            g = lambda k, d="": (q.get(k) or [d])[0]
+            try:
+                y = float(g("y", str(dragdemo.CAPTION_Y)))
+            except ValueError:
+                y = dragdemo.CAPTION_Y
+            try:
+                from PIL import Image as _Im, ImageDraw as _D
+                base = _Im.new("RGB", (dragdemo.W, dragdemo.H), (0, 0, 0))
+                d = _D.Draw(base, "RGBA")
+                dragdemo._dashed_round_rect(d, dragdemo.ZONE, dragdemo.ZONE_R,
+                                            dragdemo.DASH_ON, dragdemo.DASH_OFF,
+                                            dragdemo.DASH_W, dragdemo.DASH_COLOR)
+                pill = dragdemo.build_pill(g("text", "Upload Your Photo"),
+                                           g("style", "plain"), y, g("font", "system"))
+                base.paste(pill, (0, 0), pill)
+                base.thumbnail((216, 384), _Im.LANCZOS)
+                buf = io.BytesIO()
+                base.save(buf, "PNG")
+                data = buf.getvalue()
+            except Exception:
+                self.send_response(500)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -2736,8 +2876,20 @@ class Handler(BaseHTTPRequestHandler):
             r = load_settings()
             r["pair_presets"] = pair_presets_load()
             r["langs"] = i18n.LANGS
+            r["speed_presets"] = dragdemo.SPEED_PRESETS
+            r["shortcuts"] = shortcuts_load()
             r["i18n"] = {code: i18n.table(code) for code, _ in i18n.LANGS}
             self._json(r)
+        elif self.path == "/rename_shortcut":
+            d = self._read()
+            try:
+                idx = int(d.get("i"))
+            except (TypeError, ValueError):
+                idx = -1
+            if not (0 <= idx < len(SHORTCUTS)):
+                self._json({"error": "未知入口"})
+                return
+            self._json({"shortcuts": shortcut_rename(idx, d.get("name"))})
         elif self.path == "/open_shortcut":
             try:
                 idx = int(self._read().get("i"))
@@ -2905,7 +3057,12 @@ class Handler(BaseHTTPRequestHandler):
                 "use_transition": bool(d.get("use_transition", True)),
                 "caption_style": (d.get("caption_style")
                                   if d.get("caption_style") in dragdemo.CAPTION_STYLE_KEYS
-                                  else "pill_pink"),
+                                  else "plain"),
+                "caption_font_key": (d.get("caption_font")
+                                     if d.get("caption_font") in dragdemo.FONT_KEYS
+                                     else "system"),
+                "caption_y": _clamp_float(d.get("caption_y"), 18.5, 4, 80) / 100.0,
+                "duration": _clamp_float(d.get("duration"), 1.9, 0.6, 15.0),
             }
             out = os.path.splitext(photo)[0] + "-拖照片演示" + \
                 (".mov" if dopts["transparent"] else ".mp4")
@@ -2922,7 +3079,11 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.update(busy=True, done=False, ok=False, cancelled=False, out=None,
                              kind="demo", prog_done=0, prog_total=0, lines=[])
             save_settings({"demo_caption": d.get("caption", ""),
-                           "demo_caption_style": dopts["caption_style"]})
+                           "demo_caption_style": dopts["caption_style"],
+                           "demo_caption_y": str(d.get("caption_y", "18.5")),
+                           "demo_font": dopts["caption_font_key"],
+                           "demo_duration": str(d.get("duration", "1.9")),
+                           "demo_motion": dopts["motion"]})
             threading.Thread(target=worker_demo,
                              args=(photo, result, (d.get("caption") or "").strip(),
                                    out, dopts),

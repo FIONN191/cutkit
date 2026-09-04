@@ -208,6 +208,16 @@ EN = {
     "AI 视频 · Magic Sync": "AI Video · Magic Sync",
     "AI 图片创作": "AI Image Create",
     "钉钉文档": "DingTalk Doc", "钉钉表格": "DingTalk Sheet",
+    "给这个入口起个名字（留空恢复默认）": "Name this shortcut (blank restores the default)",
+    "右键改名": "Right-click to rename",
+    "顶部标题（留空则不加）": "Title (leave blank for none)",
+    "字体": "Font", "系统": "System", "黑体": "Heiti",
+    "标题竖直位置": "Title height",
+    "标题位置预览": "Title position preview",
+    "（真实字体与样式）": "(actual font and style)",
+    "速度预设": "Speed preset", "成片时长（秒）": "Length (seconds)",
+    "默认速度（1.9 秒）": "Default (1.9s)", "更快（1.4 秒）": "Faster (1.4s)",
+    "原速（5.0 秒）": "Original (5.0s)", "放慢（2.6 秒）": "Slower (2.6s)",
     "图片": "image", "视频": "video", "音频": "audio",
 }
 

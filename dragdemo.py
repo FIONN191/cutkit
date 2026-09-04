@@ -16,9 +16,9 @@ import sys
 import wave
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
-from render import (ffmpeg_exe, _font, _smooth,
+from render import (ffmpeg_exe, _font, _smooth, _has_cjk,
                     Cancelled, check_cancel, track_proc, abort_proc,
                     bail_if_cancelled)
 
@@ -26,8 +26,50 @@ W, H = 1080, 1920
 FPS = 30
 
 # ---------- 几何（1080x1920 下实测） ----------
-PILL_Y0, PILL_Y1, PILL_R = 139, 280, 24
+# 标题竖直位置：以「中心 y 占画面高的比例」表示，方便可视化调。
+# 0.185 是照参考片实测的（1920 画布上约 356px）；原来的 0.109 明显偏高。
+CAPTION_Y = 0.185
+PILL_H = 141                       # 药丸高度，位置由 CAPTION_Y 推出来
+PILL_R = 24
 PILL_FILL = (210, 30, 247)
+
+# 可选字体。空路径 = 交给 render._font 按文字内容自动挑（中文走黑体，西文走 HelveticaNeue）。
+FONTS = [
+    ("system",   "系统", ""),
+    ("helvetica", "Helvetica Neue", "/System/Library/Fonts/HelveticaNeue.ttc"),
+    ("avenir",   "Avenir Next", "/System/Library/Fonts/Avenir Next.ttc"),
+    ("futura",   "Futura", "/System/Library/Fonts/Supplemental/Futura.ttc"),
+    ("impact",   "Impact", "/System/Library/Fonts/Supplemental/Impact.ttf"),
+    ("arialblack", "Arial Black", "/System/Library/Fonts/Supplemental/Arial Black.ttf"),
+    ("georgia",  "Georgia", "/System/Library/Fonts/Supplemental/Georgia Bold.ttf"),
+    ("times",    "Times", "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf"),
+    ("chalk",    "Chalkboard", "/System/Library/Fonts/Supplemental/Chalkboard.ttc"),
+    ("heiti",    "黑体", "/System/Library/Fonts/STHeiti Medium.ttc"),
+]
+FONT_KEYS = {k for k, _, _ in FONTS}
+_FONT_PATHS = {k: p for k, _, p in FONTS}
+
+# 速度预设。数值是成片总时长（秒）——比"倍数"直观，
+# 1.9 是参考片 进度条-默认速度.mp4 的实测长度。
+SPEED_PRESETS = [
+    ("default", "默认速度（1.9 秒）", 1.9),
+    ("fast",    "更快（1.4 秒）", 1.4),
+    ("normal",  "原速（5.0 秒）", 5.0),
+    ("slow",    "放慢（2.6 秒）", 2.6),
+]
+
+
+def caption_font(size, text, key="system"):
+    """按选择拿字体；选了具体字体但文本含中文而该字体没有中文字形时，退回自动选择。"""
+    path = _FONT_PATHS.get(key or "system", "")
+    if path and os.path.exists(path):
+        try:
+            f = ImageFont.truetype(path, size)
+            if not _has_cjk(text) or f.getmask("变").getbbox():
+                return f
+        except Exception:
+            pass
+    return _font(size, "bold", text)
 PILL_PAD = 58                      # 文字左右内边距
 ZONE = (139, 402, 936, 1272)       # 虚线上传框
 ZONE_R, DASH_ON, DASH_OFF, DASH_W = 64, 24, 14, 7
@@ -121,16 +163,20 @@ CAPTION_STYLE_KEYS = {k for k, _, _ in CAPTION_STYLES}
 _CAPTION_STYLE_MAP = {k: v for k, _, v in CAPTION_STYLES}
 
 
-def build_pill(caption, style="pill_pink"):
-    """标题单独出一张透明图 —— 它要盖在转场蒙版之上，保持不被压暗。"""
+def build_pill(caption, style="pill_pink", y=CAPTION_Y, font_key="system"):
+    """标题单独出一张透明图 —— 它要盖在转场蒙版之上，保持不被压暗。
+
+    y 是标题中心占画面高的比例，界面上用滑杆调、旁边有预览。
+    """
     im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     if not caption:
         return im
     st = _CAPTION_STYLE_MAP.get(style) or _CAPTION_STYLE_MAP["pill_pink"]
     d = ImageDraw.Draw(im)
-    f = _font(56, "bold", caption)
+    f = caption_font(56, caption, font_key)
     tw = d.textlength(caption, font=f)
-    cy = (PILL_Y0 + PILL_Y1) / 2
+    cy = max(PILL_H / 2 + 8, min(H - PILL_H / 2 - 8, float(y) * H))
+    PILL_Y0, PILL_Y1 = cy - PILL_H / 2, cy + PILL_H / 2
 
     box = st.get("box")
     if box:
@@ -344,12 +390,17 @@ def create_audio(path, dur, drag0=D_DRAG0, snap=D_SNAP):
 class TransitionStream:
     """把带 alpha 的转场素材按需一帧帧读出来（RGBA），供 Pillow 合成。"""
 
-    def __init__(self, path, w=W, h=H, fps=FPS):
+    def __init__(self, path, w=W, h=H, fps=FPS, speed=1.0):
         self.w, self.h, self.size = w, h, w * h * 4
         self.eof = False
+        # 整条时间轴压缩时，转场素材也得同比放快，否则只会播到一半就被截断
+        vf = f"scale={w}:{h}"
+        if abs(speed - 1.0) > 1e-6:
+            vf += f",setpts=PTS/{speed:g}"
+        vf += f",fps={fps}"
         self.proc = subprocess.Popen(
             [ffmpeg_exe(), "-v", "error", "-c:v", "libvpx-vp9", "-i", path,
-             "-vf", f"scale={w}:{h},fps={fps}", "-f", "rawvideo",
+             "-vf", vf, "-f", "rawvideo",
              "-pix_fmt", "rgba", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
@@ -383,16 +434,21 @@ class DragDemo:
 
     def __init__(self, photo, out_path, caption="Upload Your Photo",
                  result=None, transition=None, tail=TAIL, tmp_dir=None,
-                 motion="slide", transparent=False, aspect_fit=None,
-                 cursor=None, sound=False, glow=True, use_transition=True,
-                 caption_style="pill_pink", progress=None, log=None):
+                 motion="drag", transparent=False, aspect_fit=None,
+                 cursor=None, sound=True, glow=True, use_transition=True,
+                 caption_style="plain", caption_y=CAPTION_Y,
+                 caption_font_key="system", duration=None,
+                 progress=None, log=None):
         self.tmp_dir = tmp_dir or os.path.join(
             os.path.expanduser("~/Library/Caches"), "CutKit")
         self.photo_path = photo
         self.out_path = out_path
         self.caption = caption or ""
         self.caption_style = (caption_style if caption_style in CAPTION_STYLE_KEYS
-                              else "pill_pink")
+                              else "plain")
+        self.caption_y = float(caption_y)
+        self.caption_font_key = (caption_font_key if caption_font_key in FONT_KEYS
+                                 else "system")
         self.result_path = result or None
         self.motion = motion if motion in ("slide", "drag") else "slide"
         self.transparent = bool(transparent)
@@ -415,7 +471,15 @@ class DragDemo:
         self.t_trans = T_TRANS if self.motion == "slide" else D_SETTLE + 0.15
         end = self.t_trans + self.trans_dur if use_transition else \
             (T_SETTLE if self.motion == "slide" else D_SETTLE) + 0.8
-        self.total = int(round((end + self.tail) * FPS))
+        # 自然时长（所有关键点都按这个时间轴定义），再按目标时长整体缩放。
+        # 缩放放在「帧 → 时间」这一步，所有动作关键点就自动跟着走，不用逐个改。
+        natural = end + self.tail
+        try:
+            want = float(duration) if duration else 0.0
+        except (TypeError, ValueError):
+            want = 0.0
+        self.speed = (natural / want) if want > 0.05 else 1.0
+        self.total = int(round(natural / self.speed * FPS))
 
     # ---------- 每帧 ----------
     def _base_layer(self):
@@ -498,7 +562,7 @@ class DragDemo:
                            _smooth(min(1.0, (t - r0) / 0.32)))
 
     def frame_at(self, n):
-        t = n / FPS
+        t = n / FPS * self.speed
         frame = self._frame_drag(t) if self.motion == "drag" else self._frame_slide(t)
         if self.stream is not None and t >= self.t_trans:
             ov = self.stream.next()
@@ -540,16 +604,19 @@ class DragDemo:
             self.result = load_photo(self.result_path, box) if self.result_path else None
             self.static = build_static()
 
-        self.pill = (build_pill(self.caption, self.caption_style)
+        self.pill = (build_pill(self.caption, self.caption_style,
+                                self.caption_y, self.caption_font_key)
                      if (self.caption and not self.transparent) else None)
-        self.stream = TransitionStream(self.transition) if self.transition else None
+        self.stream = (TransitionStream(self.transition, speed=self.speed)
+                       if self.transition else None)
 
         wav = None
         if self.sound:
             wav = os.path.join(self.tmp_dir, "dragsfx.wav")
+            # 音效的时间点要换算到输出时间轴上，否则变速后咔哒声会对不上吸附
             create_audio(wav, self.total / FPS,
-                         drag0=D_DRAG0 if self.motion == "drag" else T_IN,
-                         snap=D_SNAP if self.motion == "drag" else T_LAND)
+                         drag0=(D_DRAG0 if self.motion == "drag" else T_IN) / self.speed,
+                         snap=(D_SNAP if self.motion == "drag" else T_LAND) / self.speed)
 
         pix = "rgba" if self.transparent else "rgb24"
         cmd = [ffmpeg_exe(), "-y", "-v", "error",
@@ -608,8 +675,14 @@ def main(argv):
     ap.add_argument("photo", help="要上传演示的照片（任意比例）")
     ap.add_argument("-o", "--out", default=None)
     ap.add_argument("--caption", default="Upload Your Photo")
-    ap.add_argument("--caption-style", default="pill_pink",
+    ap.add_argument("--caption-style", default="plain",
                     choices=[k for k, _, _ in CAPTION_STYLES])
+    ap.add_argument("--caption-y", type=float, default=CAPTION_Y,
+                    help="标题中心占画面高的比例，0~1")
+    ap.add_argument("--font", dest="font_key", default="system",
+                    choices=[k for k, _, _ in FONTS])
+    ap.add_argument("--duration", type=float, default=SPEED_PRESETS[0][2],
+                    help=f"成片总时长（秒），默认 {SPEED_PRESETS[0][2]}；传 0 = 按自然时长")
     ap.add_argument("--result", default=None, help="AI 结果图（转场后淡入）")
     ap.add_argument("--motion", choices=("slide", "drag"), default="slide",
                     help="slide=复刻参考片飞入; drag=光标拖拽（任意比例自适应）")
@@ -635,6 +708,8 @@ def main(argv):
              cursor=args.cursor, sound=args.sound,
              use_transition=args.use_transition,
              caption_style=args.caption_style,
+             caption_y=args.caption_y, caption_font_key=args.font_key,
+             duration=args.duration,
              progress=lambda d, t: (d % 30 == 0) and print(f"{d}/{t}"),
              log=print).render()
     print("OK", out)
