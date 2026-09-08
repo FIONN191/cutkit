@@ -1639,7 +1639,7 @@ async function pickAudio(){
 }
 function clearAudio(){AUDIO="";$('audioName').textContent="";$('audioName2').textContent="";}
 let MODE='pairs', PLAN=null, VIDEO='', cap1Edited=false;
-let RSRC='', RPRESETS={}, RASSETS={}, RDEFAULTS={};
+let RSRC='', RPRESETS={}, RASSETS={}, RDEFAULTS={}, RWAIT=null;
 const RKEYS=['target','paint_sec','type_speed','wait_sec','last_wait'];
 function rParams(){const o={};RKEYS.forEach(k=>o[k]=$('r_'+k).value);return o;}
 function rSizes(){return {precomp:parseFloat($('r_precomp_size').value),
@@ -2123,12 +2123,25 @@ async function applyRosieNl(){
 }
 async function runRosie(){
   if(!RSRC)return;
+  if(RWAIT){clearInterval(RWAIT);RWAIT=null;}
   const r=await post('/rosie_run',{src:RSRC,params:rParams(),mode:$('rosieMode').value,
     overlay:$('rosieOverlay').checked,sizes:rSizes()});
-  if(r.error){$('progRosie').textContent=r.error;return;}
+  if(r.error){rosieBlocked(r.error);return;}
   BUSY=true;$('goRosie').disabled=true;$('doneRowRosie').style.display='none';
   $('logRosie').textContent='';$('progRosie').textContent='处理中…（首次分析约 1-2 分钟）';
   POLL=setInterval(pollRosie,600);
+}
+// 没能开工时别把一行字晾在那儿冒充进度：说清楚是没开始，
+// 并盯着后台，等它空下来就把提示换成「可以再点一次」。
+function rosieBlocked(msg){
+  $('progRosie').textContent='⚠️ 没开始：'+msg;
+  $('goRosie').disabled=false;
+  if(RWAIT)clearInterval(RWAIT);
+  RWAIT=setInterval(async()=>{
+    const s=await post('/status');
+    if(!s.busy){clearInterval(RWAIT);RWAIT=null;
+      $('progRosie').textContent='后台任务已结束，可以再点一次「开始剪辑」';}
+  },800);
 }
 async function pollRosie(){
   const s=await post('/status');
@@ -2321,7 +2334,7 @@ function filterChanged(){
   $('cap1').value=v?('Select the \u201c'+v+' Effect\u201d'):'Select the Effect';
 }
 async function pickVideo(){
-  const r=await post('/pick_video');
+  const r=await post('/pick_video',{analyze:true});
   if(r.error){$('prog2').textContent=r.error;return;}
   if(!r.path)return;
   setVideo(r.path);
@@ -2928,9 +2941,16 @@ class Handler(BaseHTTPRequestHandler):
             imgs = render.list_images(folder) if os.path.isdir(folder) else []
             self._json({"pairs": render.auto_pair(imgs), "images": imgs})
         elif self.path == "/pick_video":
+            # 只有「录屏步骤」那页需要顺带分析；自然流自动剪辑和广告结尾片段
+            # 只是挑个文件，别替它们占住 busy —— 否则它们下一步会被自己
+            # 悄悄触发的分析挡在门外，而且那页根本没有轮询来提示这件事。
+            analyze = bool(self._read().get("analyze"))
             path = pick_video()
             if not path:
                 self._json({"path": None})
+                return
+            if not analyze:
+                self._json({"path": path})
                 return
             with LOCK:
                 if STATE["busy"]:
@@ -2980,7 +3000,8 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.update(busy=True, done=False, ok=False, cancelled=False, kind="screen",
                              out=None, prog_done=0, prog_total=0, lines=[])
             threading.Thread(target=worker_screen,
-                             args=(video, plan_d, texts, out, audio),
+                             args=(video, plan_d, texts, out, audio,
+                                   zoom_end, zoom_photo),
                              daemon=True).start()
             self._json({"ok": True})
         elif self.path == "/ring_preview":
