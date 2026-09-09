@@ -106,6 +106,18 @@ cd cutkit
 pyinstaller --noconfirm CutKit.spec   # → dist/CutKit.app
 ```
 
+## Test / 测试
+
+```
+python3 tests/test_busy.py
+```
+
+Guards the `busy` state machine — a background thread dying before its own
+`try` leaves the flag set and every mode reports "正在处理中" until the app is
+restarted. Run it after touching `gui.py`.
+守 busy 状态机：后台线程在进 try 之前死掉，busy 就再没人清，界面从此对所有
+模式都只会说「正在处理中」，只能重启。动过 `gui.py` 就跑一下。
+
 ## Layout / 结构
 
 | File | |
@@ -119,4 +131,5 @@ pyinstaller --noconfirm CutKit.spec   # → dist/CutKit.app
 | `ringarrow.py` | ring+arrow badge → transparent MOV / 圆环箭头角标 → 透明底 MOV |
 | `gui.py` | native window GUI (pywebview + local HTTP) / 原生窗口界面 |
 | `CutKit.spec` | PyInstaller config / 打包配置 |
+| `tests/test_busy.py` | busy-state regression gate / busy 状态机回归闸门 |
 | `CutKit.icns` `iconsrc.png` | app icon / 图标 |
