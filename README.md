@@ -106,6 +106,12 @@ cd cutkit
 pyinstaller --noconfirm CutKit.spec   # → dist/CutKit.app
 ```
 
+Releases build themselves: publishing a GitHub release runs `build-macos`
+(Apple Silicon → `CutKit-mac.dmg`) and `build-windows` (→ `CutKit-win-x64.exe`)
+and attaches both to it. Either can also be re-run by hand with the release tag
+as its input. / 发版不用手动打包：发布 release 会自动跑这两个工作流，把 DMG 和 EXE
+挂到这个 release 上；也可以手动触发、填 release 的 tag 重跑。
+
 ## Test / 测试
 
 ```
@@ -132,6 +138,7 @@ restarted. Run it after touching `gui.py`.
 | `ringarrow.py` | ring+arrow badge → transparent MOV / 圆环箭头角标 → 透明底 MOV |
 | `gui.py` | native window GUI (pywebview + local HTTP) / 原生窗口界面 |
 | `CutKit.spec` | PyInstaller config / 打包配置 |
+| `.github/workflows/` | release builds: macOS DMG + Windows exe / 发版构建：macOS DMG 与 Windows exe |
 | `tests/test_busy.py` | busy-state regression gate / busy 状态机回归闸门 |
 | `tests/test_assets.py` | overlay assets always resolve (bundled fallback) / 叠加素材永远找得到（内置兜底） |
 | `CutKit.icns` `iconsrc.png` | app icon / 图标 |

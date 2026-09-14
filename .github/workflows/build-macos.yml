@@ -1,0 +1,59 @@
+name: build-macos
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the dmg to (e.g. v3.3.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    # Apple Silicon runner — the DMG it produces is arm64-only, same as the
+    # hand-built ones it replaces. An Intel build would need macos-13.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # pywebview declares the pyobjc frameworks as macOS deps of its own
+      # (core, Cocoa, WebKit, Quartz, security), which is every one the spec
+      # collects submodules from for the native WKWebView window.
+      - name: Install deps
+        run: pip install pillow numpy opencv-python-headless pywebview imageio-ffmpeg pyinstaller
+
+      - name: Build app
+        run: pyinstaller --noconfirm CutKit.spec
+
+      # The overlay assets ride inside the bundle; shipping a DMG without them
+      # is exactly the "找不到素材" failure they were bundled to end.
+      - name: Check bundled assets made it in
+        run: |
+          for f in precomp-loading.mov fotor-watermark.mov fotor-loading.webm; do
+            find dist/CutKit.app -name "$f" | grep -q . || {
+              echo "::error::$f missing from CutKit.app"; exit 1; }
+          done
+
+      # ditto, not cp: it keeps the ad-hoc signature PyInstaller puts on the
+      # bundle, without which an arm64 app will not launch at all.
+      - name: Make DMG
+        run: |
+          mkdir -p dmg
+          ditto dist/CutKit.app dmg/CutKit.app
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname CutKit -srcfolder dmg -ov -format UDZO CutKit-mac.dmg
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          gh release upload "$TAG" CutKit-mac.dmg --clobber
