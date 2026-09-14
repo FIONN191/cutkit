@@ -23,9 +23,9 @@
 
 **模式 3 — 拖照片演示。** 复刻「上传一张照片」的教程广告：虚线上传框带 `+`，照片从左下飞入、落框时放大回弹，随后播放 **Fotor 彩色转场**（进度环 → AI Generated 徽章，自带压暗蒙版）替代通用的百分比加载动画。给了 AI 结果图的话，徽章出现的瞬间会交叉淡入。两种动画风格：复刻参考片的飞入落框，或**光标拖拽**——指针从下方抓起卡片、走弧线拖进框里再吸附（画框按原图比例自适应，横图竖图方图都行）。可导出**透明底 MOV**（QTRLE/ARGB），整段动画能直接盖到自己的素材上（剪映 / CapCut），并可加合成的拖拽风声 + 吸附咔哒音效。
 
-**Mode 5 — Fotor screen-recording auto-edit** (was RosieCut). Classifies a Fotor screen recording into paint / type / wait states, re-times each run to a beat (target duration or automatic), auto-detects the crop, and — in *natural* mode — replaces the waiting segments with logo-free frames and overlays the pre-comp animation plus the Fotor watermark. Keeps every original control: presets (save / delete), natural-language instructions (offline, or via Claude with an API key), paint duration, typing speed-up, wait beat, final wait beat, natural vs ad version, overlay toggle and per-asset widths.
+**Mode 5 — Fotor screen-recording auto-edit** (was RosieCut). Classifies a Fotor screen recording into paint / type / wait states, re-times each run to a beat (target duration or automatic), auto-detects the crop, and — in *natural* mode — replaces the waiting segments with logo-free frames and overlays the pre-comp animation plus the Fotor watermark — both assets ship inside CutKit, so a fresh machine with no material folder still gets them (pick your own copy any time; *Use bundled* switches back). Keeps every original control: presets (save / delete), natural-language instructions (offline, or via Claude with an API key), paint duration, typing speed-up, wait beat, final wait beat, natural vs ad version, overlay toggle and per-asset widths.
 
-**模式 5 — Fotor 录屏自动剪辑**（原 RosieCut）。把 Fotor 录屏识别成「涂抹 / 打字 / 等待」三种状态，按节拍重排每段时长（可给目标时长，也可自动），自动检测裁剪；自然流版本还会把等待段替换成无 logo 画面，并叠加预合成动画与 fotor 水印。原有控件一个不少：预设（保存/删除）、自然语言指令（离线，或填 API key 走 Claude）、涂抹段时长、打字加速倍数、等待节拍、末尾等待节拍、自然流/广告版、叠加开关与各素材宽度。
+**模式 5 — Fotor 录屏自动剪辑**（原 RosieCut）。把 Fotor 录屏识别成「涂抹 / 打字 / 等待」三种状态，按节拍重排每段时长（可给目标时长，也可自动），自动检测裁剪；自然流版本还会把等待段替换成无 logo 画面，并叠加预合成动画与 fotor 水印 —— 这两个素材已内置在 CutKit 里，换新机器、素材盘没插、素材路径改了都不会「找不到素材」；想用自己的那份随时「选择…」，点「用内置」再切回来。原有控件一个不少：预设（保存/删除）、自然语言指令（离线，或填 API key 走 Claude）、涂抹段时长、打字加速倍数、等待节拍、末尾等待节拍、自然流/广告版、叠加开关与各素材宽度。
 
 **Mode 4 — Ring + arrow badge.** Upload a photo of any aspect ratio and get a **transparent-background MOV** (ProRes 4444, plus a PNG) holding the classic "original photo in a white ring with a hand-drawn arrow pointing at the result" callout — drop it straight onto your video. Geometry matches the reference creative (bottom-left, ring radius 0.161×W); live preview with sliders for crop, size and position; static by default, optional pop-in.
 
@@ -127,9 +127,11 @@ restarted. Run it after touching `gui.py`.
 | `rosiecut.py` `rosie.py` `nl.py` `analyze.py` | Fotor screen-recording auto-edit + natural-language params / 录屏自动剪辑 + 自然语言参数 |
 | `align.py` | before/after subject alignment / 前后图人物对齐 |
 | `history.py` | render history + JianYing material folder / 生成历史 + 剪映素材夹 |
-| `dragdemo.py` `assets/` | drag-photo demo (2 motions, MP4 + transparent MOV) + bundled Fotor transition / 拖照片演示（两种动画、MP4 与透明 MOV）+ 内置 Fotor 转场 |
+| `dragdemo.py` | drag-photo demo (2 motions, MP4 + transparent MOV) / 拖照片演示（两种动画、MP4 与透明 MOV） |
+| `assets/` | bundled material: Fotor transition, pre-comp loading animation (alpha), Fotor watermark / 内置素材：Fotor 转场、预合成动画（带 alpha）、fotor 水印 |
 | `ringarrow.py` | ring+arrow badge → transparent MOV / 圆环箭头角标 → 透明底 MOV |
 | `gui.py` | native window GUI (pywebview + local HTTP) / 原生窗口界面 |
 | `CutKit.spec` | PyInstaller config / 打包配置 |
 | `tests/test_busy.py` | busy-state regression gate / busy 状态机回归闸门 |
+| `tests/test_assets.py` | overlay assets always resolve (bundled fallback) / 叠加素材永远找得到（内置兜底） |
 | `CutKit.icns` `iconsrc.png` | app icon / 图标 |

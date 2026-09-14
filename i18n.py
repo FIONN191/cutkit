@@ -195,6 +195,11 @@ EN = {
     "放入剪映素材夹": "Copy to CapCut folder", "删除记录": "Delete entry",
     "✅ 已在剪映素材夹": "✅ In the CapCut folder",
     "未找到，将跳过叠加": "not found — overlay will be skipped",
+    "内置": "bundled", "用内置": "Use bundled",
+    "两个素材已随 CutKit 内置，换机器、换路径都不会丢；想用自己的那份就点「选择…」。":
+        "Both assets ship inside CutKit, so they survive a new machine or a moved "
+        "folder. Choose… swaps in your own copy.",
+    "改回随 CutKit 内置的那份素材": "Switch back to the copy bundled with CutKit",
     "还缺：": "Still needed: ", "、": ", ",
     "至少一组完整的前后图": "at least one complete before/after pair",
     "演示原图": "the demo source photo", "BGM": "music",
