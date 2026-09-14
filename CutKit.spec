@@ -5,7 +5,8 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 MAC = sys.platform == "darwin"
 
-datas = [('assets', 'assets')]   # Fotor 转场素材随包分发
+datas = [('assets', 'assets')]   # 素材随包分发：Fotor 转场 + 预合成动画 + fotor 水印
+                                 # （少了它们，换机器就会「找不到素材」）
 binaries = []
 hiddenimports = ['render', 'screencut', 'history', 'dragdemo', 'ringarrow', 'align',
                  'rosie', 'rosiecut', 'nl', 'analyze', 'adcut', 'i18n']

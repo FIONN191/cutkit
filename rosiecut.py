@@ -71,6 +71,15 @@ CACHE_VERSION = 10
 #               square's bottom edge aligned to the frame bottom
 PRECOMP_NAME = "预合成 1.mov"
 WATERMARK_NAME = "FOTOR水印裁剪过.mov"
+# The same two assets travel inside CutKit (assets/), so a machine that has never
+# seen the author's material folder still gets the overlays. The bundled pre-comp
+# is the authored 800x800 ProRes 4444 re-wrapped as QuickTime RLE (alpha kept
+# lossless, RGB rounded to 6 bits: 15.5MB -> 3MB, PSNR 70dB in the composite);
+# the watermark is the original H.264 stream copied, minus its audio/timecode
+# tracks. Both keep their authored framing, so content_bbox/place() put the
+# artwork exactly where the originals did.
+BUNDLED_NAMES = {PRECOMP_NAME: "precomp-loading.mov",
+                 WATERMARK_NAME: "fotor-watermark.mov"}
 # How wide the artwork itself is drawn, in % of the output width (the asset's own
 # transparent/black padding is measured away first, see content_bbox). Both land
 # dead centre. The pre-comp default matches the hand-built reference edit (scale
@@ -93,20 +102,46 @@ def app_support_dir():
     return os.path.join(base, "RosieCut")
 
 
-def find_asset(name, override=None):
-    """Locate an overlay asset: explicit path, then the usual drop folders."""
-    if override:
-        return override if os.path.isfile(override) else None
+def asset_dirs():
+    """Where overlay assets are looked for, in order of preference."""
     exe_dir = os.path.dirname(os.path.abspath(
         sys.executable if getattr(sys, "frozen", False) else __file__))
-    for d in (os.path.join(app_support_dir(), "assets"),
-              os.path.join(exe_dir, "assets"),
-              os.path.join(getattr(sys, "_MEIPASS", exe_dir), "assets"),
-              MATERIAL_DIR):
-        p = os.path.join(d, name)
+    return (os.path.join(app_support_dir(), "assets"),
+            os.path.join(exe_dir, "assets"),
+            # PyInstaller unpacks datas here; in dev it repeats exe_dir harmlessly
+            os.path.join(getattr(sys, "_MEIPASS", exe_dir), "assets"),
+            MATERIAL_DIR)
+
+
+def bundled_asset(name):
+    """The copy of an overlay asset that ships inside CutKit, if there is one."""
+    fn = BUNDLED_NAMES.get(name)
+    if not fn:
+        return None
+    for d in asset_dirs():
+        p = os.path.join(d, fn)
         if os.path.isfile(p):
             return p
     return None
+
+
+def find_asset(name, override=None):
+    """Locate an overlay asset: explicit path, the usual drop folders, then the
+    copy bundled with CutKit.
+
+    The bundle comes last so anyone keeping their own version of an asset goes
+    on using it — but it is always there, which is the point: a new machine, an
+    unplugged drive, a moved or renamed file can no longer drop the overlays out
+    of the cut. A stale override (the path a preset was saved with, on a disk
+    that no longer exists) falls through the same chain instead of failing.
+    """
+    if override and os.path.isfile(override):
+        return override
+    for d in asset_dirs():
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            return p
+    return bundled_asset(name)
 
 
 def probe_range(path):

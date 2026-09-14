@@ -145,9 +145,16 @@ def _ov_write(d):
 
 
 def ov_save(name, data):
-    """存一份预设，并把它记为「最近一次」——下次打开默认选它。"""
+    """存一份预设，并把它记为「最近一次」——下次打开默认选它。
+
+    素材是内置那份时存空路径而不是绝对路径：内置素材在打包后住在临时解包目录
+    （Windows 单文件每次启动都换一个），存下来的路径下次就失效了；存空则每次
+    重新按查找链解析，预设跟着换机器也照样用。
+    """
     d = ov_load()
     entry = {}
+    builtin = {k: (v.get("path") or "") for k, v in resolve_assets().items()
+               if v.get("builtin")}
     for k in OVERLAY_KEYS:
         v = data.get(k)
         if k.endswith("_size"):
@@ -157,6 +164,8 @@ def ov_save(name, data):
                 v = None
             entry[k] = v if (v is not None and 1 <= v <= 100) else None
         else:
+            if isinstance(v, str) and v and v == builtin.get(k):
+                v = ""
             entry[k] = v if isinstance(v, str) and v else None
     d["presets"][name] = entry
     d["last"] = name
@@ -178,8 +187,9 @@ def ov_apply(entry):
     entry = entry or {}
     kw = {}
     for k in ("precomp", "watermark"):
-        if entry.get(k):
-            kw[k] = entry[k]
+        if k in entry:
+            # 空路径 = 这份预设存的就是内置素材，清掉自选、让查找链重新解析
+            kw[k] = entry[k] or ""
     sizes = {}
     for k, dst in (("precomp_size", "precomp"), ("watermark_size", "watermark")):
         try:
@@ -196,9 +206,21 @@ def ov_apply(entry):
 
 
 def resolve_assets():
+    """当前生效的两个叠加素材。builtin 标记「这份是随包内置的」。"""
     over = load_asset_overrides()
-    return {k: {"label": label, "path": rosiecut.find_asset(name, over.get(k))}
-            for k, (label, name) in ASSET_KINDS.items()}
+    out = {}
+    for k, (label, name) in ASSET_KINDS.items():
+        p = rosiecut.find_asset(name, over.get(k))
+        out[k] = {"label": label, "path": p,
+                  "builtin": bool(p) and p == rosiecut.bundled_asset(name)}
+    return out
+
+
+def clear_asset(kind):
+    """回到内置素材：把自选路径清掉，让查找链重新落到随包那份。"""
+    if kind in ASSET_KINDS:
+        save_assets_file(**{kind: ""})
+    return {"assets": resolve_assets(), "sizes": load_sizes()}
 
 
 class Args:
@@ -267,8 +289,9 @@ def run_job(src, args, mode="natural", overlay=True, sizes=None, log=None):
             precomp, watermark = a["precomp"]["path"], a["watermark"]["path"]
             for kind in ("precomp", "watermark"):
                 p = a[kind]["path"]
+                tag = "（内置素材）" if a[kind]["builtin"] else ""
                 log(f"  {a[kind]['label']}: "
-                    + (os.path.basename(p) if p else "未找到，跳过叠加"))
+                    + (os.path.basename(p) + tag if p else "未找到，跳过叠加"))
             if precomp:
                 log(f"  预合成动画铺在除末拍外的等待节拍、居中（时长与节拍一致，"
                     f"宽度 {sz['precomp']:.0f}% 画面宽）")

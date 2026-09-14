@@ -1128,6 +1128,7 @@ border-radius:10px;display:none}
 <div class="hint" id="ovPresetHint" style="margin-top:6px"></div>
 
 <div id="rosieAssets" style="margin-top:10px"></div>
+<div class="hint">两个素材已随 CutKit 内置，换机器、换路径都不会丢；想用自己的那份就点「选择…」。</div>
 
 <div class="ovwrap">
 <div class="ovctl">
@@ -1662,14 +1663,24 @@ function renderRosieAssets(){
   const el=$('rosieAssets'); el.innerHTML='';
   Object.entries(RASSETS).forEach(([k,v])=>{
     const d=document.createElement('div'); d.className='row'; d.style.marginTop='6px';
+    // 内置那份永远在，标出来：看到「内置」就知道这台机器没有素材也照样能出片
+    const where=v.path
+      ? esc(base(v.path))+(v.builtin?' · '+tr('内置'):'')
+      : tr('未找到，将跳过叠加');
     d.innerHTML=`<span style="font-size:13px;min-width:96px">${esc(v.label)}</span>
-      <span class="hint" style="margin-top:0;flex:1">${v.path?esc(base(v.path)):'未找到，将跳过叠加'}</span>
-      <button class="small" onclick="pickRosieAsset('${k}')">选择…</button>`;
+      <span class="hint" style="margin-top:0;flex:1">${where}</span>
+      <button class="small" onclick="pickRosieAsset('${k}')">${tr('选择…')}</button>`
+      + (v.builtin ? '' : `<button class="small" title="${tr('改回随 CutKit 内置的那份素材')}"`
+                        + ` onclick="resetRosieAsset('${k}')">${tr('用内置')}</button>`);
     el.appendChild(d);
   });
 }
 async function pickRosieAsset(kind){
   const r=await post('/rosie_asset_pick',{kind:kind});
+  RASSETS=r.assets||RASSETS; renderRosieAssets(); ovArt();
+}
+async function resetRosieAsset(kind){
+  const r=await post('/rosie_asset_reset',{kind:kind});
   RASSETS=r.assets||RASSETS; renderRosieAssets(); ovArt();
 }
 function resetRosieSizes(){
@@ -2745,6 +2756,12 @@ class Handler(BaseHTTPRequestHandler):
             if p:
                 rosie.save_assets_file(**{kind: p})
             self._json({"assets": rosie.resolve_assets(), "sizes": rosie.load_sizes()})
+        elif self.path == "/rosie_asset_reset":
+            kind = self._read().get("kind")
+            if kind not in rosie.ASSET_KINDS:
+                self._json({"error": "未知素材类型"})
+                return
+            self._json(rosie.clear_asset(kind))
         elif self.path == "/rosie_ov_save":
             d = self._read()
             name = (d.get("name") or "").strip()
