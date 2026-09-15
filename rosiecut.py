@@ -67,17 +67,17 @@ CACHE_VERSION = 10
 # Both are authored square and are laid in scaled to the full output width, so
 # the author's framing inside the square decides where the content lands:
 #   precomp   - own loading animation (alpha), content centered -> frame centre
-#   watermark - fotor logo on pure black, content at the square's bottom ->
-#               square's bottom edge aligned to the frame bottom
+#   watermark - fotor lockup, with its own alpha (a copy on pure black works too:
+#               place() keys it on max(r,g,b))
 PRECOMP_NAME = "预合成 1.mov"
 WATERMARK_NAME = "FOTOR水印裁剪过.mov"
 # The same two assets travel inside CutKit (assets/), so a machine that has never
 # seen the author's material folder still gets the overlays. The bundled pre-comp
 # is the authored 800x800 ProRes 4444 re-wrapped as QuickTime RLE (alpha kept
 # lossless, RGB rounded to 6 bits: 15.5MB -> 3MB, PSNR 70dB in the composite);
-# the watermark is the original H.264 stream copied, minus its audio/timecode
-# tracks. Both keep their authored framing, so content_bbox/place() put the
-# artwork exactly where the originals did.
+# the watermark is the author's current 1000x1000 QuickTime RLE lockup with alpha
+# (合成 123.mov), copied byte for byte. Both keep their authored framing, so
+# content_bbox/place() put the artwork exactly where the originals did.
 BUNDLED_NAMES = {PRECOMP_NAME: "precomp-loading.mov",
                  WATERMARK_NAME: "fotor-watermark.mov"}
 # How wide the artwork itself is drawn, in % of the output width (the asset's own

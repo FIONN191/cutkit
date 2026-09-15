@@ -6,8 +6,8 @@
 动画和 fotor 水印（或者干脆报「找不到素材」）。现在 assets/ 里内置了同样
 两个素材，任何一环断了都还能落到内置那份上。
 
-顺带核对内置素材本身还是渲染管线要的样子：预合成带真 alpha、水印是黑底
-（靠亮度抠像），两者时长读得出来 —— 这三点错一个，叠加就会出错位或糊一片。
+顺带核对内置素材本身还是渲染管线要的样子：预合成和水印都带真 alpha，两者
+时长读得出来 —— 这几点错一个，叠加就会出错位或糊一片。
 
 跑法：python3 tests/test_assets.py
 """
@@ -67,7 +67,8 @@ def test_asset_shape():
     pre = rosiecut.bundled_asset(rosiecut.PRECOMP_NAME)
     wm = rosiecut.bundled_asset(rosiecut.WATERMARK_NAME)
     check("预合成带 alpha（否则会糊一块方块上去）", rosiecut.has_alpha(pre))
-    check("水印是黑底（靠 max(r,g,b) 抠像）", not rosiecut.has_alpha(wm))
+    # 内置的是作者现在用的「合成 123.mov」：QTRLE 带 alpha。换回黑底版时这里也要跟着改
+    check("水印带 alpha（1000x1000 QTRLE 那份）", rosiecut.has_alpha(wm))
     for label, p in (("预合成", pre), ("水印", wm)):
         try:
             d = rosiecut.asset_duration(p)
@@ -77,7 +78,7 @@ def test_asset_shape():
             continue
         check(f"{label}读得出时长（{d:.2f}s）", d > 0.5, d)
     # content_bbox：画面里实际有东西，且不是整帧全满（否则「按画幅宽 %」会算错）
-    for label, p, alpha in (("预合成", pre, True), ("水印", wm, False)):
+    for label, p, alpha in (("预合成", pre, True), ("水印", wm, True)):
         x0, y0, x1, y1 = rosiecut.content_bbox(p, alpha)
         check(f"{label}量得出画面内容", 0.02 < (x1 - x0) <= 1.0 and 0.02 < (y1 - y0) <= 1.0,
               (x0, y0, x1, y1))
