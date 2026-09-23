@@ -28,6 +28,7 @@ import rosiecut
 import ringarrow
 import adcut
 import i18n
+from app_version import APP_VERSION
 
 STATE = {
     "lines": [],
@@ -625,6 +626,7 @@ body{background:var(--bg);color:var(--txt);font:15px/1.5 -apple-system,"PingFang
 h1{font-size:20px;display:flex;align-items:center;gap:10px;margin-bottom:16px}
 h1 .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(144deg,var(--logo-dark) 61%,var(--logo-edge) 61%,var(--logo-edge) 63%,var(--acc) 63%,var(--acc-deep));display:inline-block}
 h1 small{color:var(--dim);font-weight:400;font-size:13px}
+h1 .app-version{flex-shrink:0;white-space:nowrap;font-size:11px;font-weight:500;line-height:1.5;color:var(--dim);background:var(--card);border:1px solid var(--line2);border-radius:6px;padding:2px 7px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
 .card h2{font-size:14px;color:var(--dim);margin-bottom:12px;font-weight:600}
 button{background:var(--btn);color:var(--txt);border:1px solid var(--btn-line);border-radius:9px;
@@ -759,7 +761,7 @@ border-radius:10px;display:none}
 .mode{display:none}.mode.on{display:block}
 #planBox{background:var(--sunken);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--dim);margin-top:10px;display:none}
 </style></head><body>
-<h1><span class="logo"></span>CutKit <small>视频运营工具箱</small>
+<h1><span class="logo"></span>CutKit <span class="app-version" id="appVersion">v<!--APP_VERSION--></span><small>视频运营工具箱</small>
 <span class="topbar">
   <button class="small" id="themeBtn" onclick="toggleTheme()" title="日夜切换"></button>
   <select id="accentSel" class="mini" onchange="setAccent(this.value)">
@@ -2578,6 +2580,7 @@ def render_page():
         f'title="右键改名">{label}</button>'
         for i, (label, _) in enumerate(shortcuts_load()))
     return (PAGE
+            .replace("<!--APP_VERSION-->", APP_VERSION)
             .replace("<!--SHORTCUTS-->", shortcuts)
             .replace("<!--CAPTION_STYLE_OPTIONS-->",
                      _options([(k, lab) for k, lab, _ in dragdemo.CAPTION_STYLES],

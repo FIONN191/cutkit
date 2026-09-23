@@ -1,7 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 import sys
+from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+version_namespace = {}
+exec((Path(SPECPATH) / 'app_version.py').read_text(encoding='utf-8'), version_namespace)
+APP_VERSION = version_namespace['APP_VERSION']
 
 MAC = sys.platform == "darwin"
 
@@ -77,8 +82,10 @@ if MAC:
         name='CutKit.app',
         icon='CutKit.icns',
         bundle_identifier='ai.fionn.cutkit',
+        version=APP_VERSION,
         info_plist={
             'CFBundleDisplayName': 'CutKit',
+            'CFBundleVersion': APP_VERSION,
             'NSHumanReadableCopyright': 'aifiltertrends',
             'NSHighResolutionCapable': True,
         },
