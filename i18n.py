@@ -9,6 +9,10 @@
 LANGS = [("zh", "中文"), ("en", "English")]
 
 EN = {
+    "顶部标题": "Top title",
+    "留空": "Leave blank",
+    "使用 text": "Use text",
+    "Fotor 转场自带转场音效，随成片速度同步；「拖拽音效」单独控制拖动与落框声音。": "Fotor transitions include synchronized sound. Drag sound controls the drag and drop sounds separately.",
     # —— 导航 / 通用 ——
     "视频运营工具箱": "Video ops toolkit",
     "前后对比": "Before / After", "录屏步骤": "Screen Steps",

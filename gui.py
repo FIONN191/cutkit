@@ -51,9 +51,10 @@ SETTING_KEYS = ("jy_auto", "jy_dir",
                 "scene_sec", "transition", "slider", "audio", "demo_caption",
                 "comment_user", "comment_text", "progress_text", "direction",
                 "pair_groups", "demo_caption_style", "demo_caption_y",
-                "demo_font", "demo_duration", "demo_motion",
+                "demo_font", "demo_duration", "demo_motion", "demo_caption_mode",
                 "theme", "accent", "lang")
 DEFAULT_SETTINGS = {
+    "demo_caption_mode": "none",
     "jy_auto": "", "jy_dir": "",
     "caption": "", "caption_size": "55",
     "label_before": "Before", "label_after": "After",
@@ -963,8 +964,9 @@ border-radius:10px;display:none}
 <div class="capwrap">
 <div class="capctl">
 <div class="grid">
-<div style="grid-column:1/3"><label>顶部标题（留空则不加）</label>
-<input id="demoCaption" value="Upload Your Photo" oninput="capPreview()"></div>
+<div style="grid-column:1/3"><label>顶部标题</label>
+<select id="demoCaptionMode" onchange="demoCaptionChanged()"><option value="none" selected>留空</option><option value="text">使用 text</option></select>
+<input id="demoCaption" value="Upload Your Photo" oninput="capPreview()" disabled style="display:none"></div>
 <div><label>标题样式</label>
 <select id="demoCaptionStyle" onchange="capPreview()"><!--CAPTION_STYLE_OPTIONS--></select></div>
 <div><label>字体</label><select id="demoFont" onchange="capPreview()"><!--FONT_OPTIONS--></select></div>
@@ -993,6 +995,7 @@ border-radius:10px;display:none}
 <figcaption>标题位置预览<br>（真实字体与样式）</figcaption></figure>
 </div>
 <div class="hint" id="demoHint2">透明 MOV 不含黑底和标题药丸，只有虚线框 + 照片卡片 + 光标，方便在剪映/CapCut 里叠到任意画面上。</div>
+<div class="hint">Fotor 转场自带转场音效，随成片速度同步；「拖拽音效」单独控制拖动与落框声音。</div>
 </div>
 
 <div class="card">
@@ -1750,12 +1753,22 @@ function wireNumPairs(){
 
 // ---------- 拖照片演示：标题预览与速度 ----------
 let capTimer=null;
+function demoCaptionText(){
+  return $('demoCaptionMode').value==='text' && !$('demoTransparent').checked ? $('demoCaption').value : '';
+}
+function demoCaptionChanged(){
+  const text=$('demoCaptionMode').value==='text';
+  const enabled=text && !$('demoTransparent').checked;
+  $('demoCaption').style.display=text?'':'none';
+  ['demoCaption','demoCaptionStyle','demoFont','demoCaptionY'].forEach(k=>$(k).disabled=!enabled);
+  capPreview();
+}
 function capPreview(){
   const y=parseFloat($('demoCaptionY').value)/100;
   $('capYL').textContent=parseFloat($('demoCaptionY').value).toFixed(1);
   clearTimeout(capTimer);
   capTimer=setTimeout(()=>{                       // 拖滑杆时别每一帧都请求
-    const q=new URLSearchParams({y:y, text:$('demoCaption').value,
+    const q=new URLSearchParams({y:y, text:demoCaptionText(),
       style:$('demoCaptionStyle').value, font:$('demoFont').value, t:Date.now()});
     $('capPv').src='/caption_preview?'+q.toString();
   },120);
@@ -2302,7 +2315,7 @@ function demoMotionChanged(){
 }
 function demoTransChanged(){
   const tp=$('demoTransparent').checked;
-  $('demoCaption').disabled=tp;
+  demoCaptionChanged();
   $('demoHint2').style.color = tp ? 'var(--acc)' : 'var(--dim)';
 }
 async function pickDemoResult(){
@@ -2312,7 +2325,7 @@ async function pickDemoResult(){
 function clearDemoResult(){DRESULT='';$('demoResult').textContent='';}
 async function runDemo(){
   if(!DPHOTO)return;
-  const r=await post('/run_demo',{photo:DPHOTO,result:DRESULT,caption:$('demoCaption').value,
+  const r=await post('/run_demo',{photo:DPHOTO,result:DRESULT,caption:demoCaptionText(),caption_mode:$('demoCaptionMode').value,
     motion:$('demoMotion').value, transparent:$('demoTransparent').checked,
     cursor:$('demoCursor').checked, sound:$('demoSound').checked,
     caption_style:$('demoCaptionStyle').value,
@@ -2444,11 +2457,13 @@ async function poll(){
   for(const k of ['caption','caption_size','label_before','label_after','scene_sec','transition','slider','direction','comment_user','comment_text','progress_text'])
     if(s[k]!==undefined&&s[k]!=='')$(k).value=s[k];
   if(s.demo_caption)$('demoCaption').value=s.demo_caption;
+  $('demoCaptionMode').value=s.demo_caption_mode==='text'?'text':'none';
   if(s.demo_caption_style)$('demoCaptionStyle').value=s.demo_caption_style;
   if(s.demo_caption_y)$('demoCaptionY').value=s.demo_caption_y;
   if(s.demo_font)$('demoFont').value=s.demo_font;
   if(s.demo_duration)$('demoDur').value=s.demo_duration;
   if(s.demo_motion)$('demoMotion').value=s.demo_motion;
+  demoCaptionChanged();
   (s.speed_presets||[]).forEach(([k,,sec])=>{SPEED_SEC[k]=sec;});
   capPreview();
   if(s.audio){AUDIO=s.audio;$('audioName').textContent=base(AUDIO);$('audioName2').textContent=base(AUDIO);}
@@ -2624,7 +2639,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
         elif self.path.startswith("/caption_preview?"):
             # 直接用真正的渲染函数出图，所见即所得（字体/样式/位置都是成片里的那套）
-            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query, keep_blank_values=True)
             g = lambda k, d="": (q.get(k) or [d])[0]
             try:
                 y = float(g("y", str(dragdemo.CAPTION_Y)))
@@ -2637,7 +2652,7 @@ class Handler(BaseHTTPRequestHandler):
                 dragdemo._dashed_round_rect(d, dragdemo.ZONE, dragdemo.ZONE_R,
                                             dragdemo.DASH_ON, dragdemo.DASH_OFF,
                                             dragdemo.DASH_W, dragdemo.DASH_COLOR)
-                pill = dragdemo.build_pill(g("text", "Upload Your Photo"),
+                pill = dragdemo.build_pill(g("text", ""),
                                            g("style", "plain"), y, g("font", "system"))
                 base.paste(pill, (0, 0), pill)
                 base.thumbnail((216, 384), _Im.LANCZOS)
@@ -3116,14 +3131,17 @@ class Handler(BaseHTTPRequestHandler):
                 render.clear_cancel()
                 STATE.update(busy=True, done=False, ok=False, cancelled=False, out=None,
                              kind="demo", prog_done=0, prog_total=0, lines=[])
-            save_settings({"demo_caption": d.get("caption", ""),
+            caption_mode = "text" if d.get("caption_mode") == "text" else "none"
+            caption = (d.get("caption") or "").strip() if caption_mode == "text" else ""
+            save_settings({"demo_caption": caption,
+                           "demo_caption_mode": caption_mode,
                            "demo_caption_style": dopts["caption_style"],
                            "demo_caption_y": str(d.get("caption_y", "18.5")),
                            "demo_font": dopts["caption_font_key"],
                            "demo_duration": str(d.get("duration", "1.9")),
                            "demo_motion": dopts["motion"]})
             threading.Thread(target=worker_demo,
-                             args=(photo, result, (d.get("caption") or "").strip(),
+                             args=(photo, result, caption,
                                    out, dopts),
                              daemon=True).start()
             self._json({"ok": True, "out": out})

@@ -432,7 +432,7 @@ class DragDemo:
     transparent: True 输出带 alpha 的 MOV，可直接盖在自己的视频上（剪映/CapCut）
     """
 
-    def __init__(self, photo, out_path, caption="Upload Your Photo",
+    def __init__(self, photo, out_path, caption="",
                  result=None, transition=None, tail=TAIL, tmp_dir=None,
                  motion="drag", transparent=False, aspect_fit=None,
                  cursor=None, sound=True, glow=True, use_transition=True,
@@ -627,13 +627,34 @@ class DragDemo:
         else:
             cmd += ["-f", "lavfi", "-t", f"{self.total / FPS:.2f}",
                     "-i", "anullsrc=r=44100:cl=stereo"]
+        audio_map = "1:a"
+        if self.transition:
+            # Keep the supplied transition sound aligned with the visual timeline,
+            # including compressed durations and the later start of dual uploads.
+            cmd += ["-i", asset_path("fotor-transition.wav")]
+            tempo = self.speed
+            filters = []
+            while tempo > 2.0:
+                filters.append("atempo=2")
+                tempo /= 2.0
+            while tempo < 0.5:
+                filters.append("atempo=0.5")
+                tempo /= 0.5
+            filters.append(f"atempo={tempo:.8f}")
+            delay = round(self.t_trans / self.speed * 1000)
+            filters += [f"adelay={delay}:all=1", "apad"]
+            cmd += ["-filter_complex",
+                    "[2:a]" + ",".join(filters) + "[transition];"
+                    "[1:a][transition]amix=inputs=2:duration=first:normalize=0,"
+                    "alimiter=limit=0.95:level=0:latency=1[mixed]"]
+            audio_map = "[mixed]"
         if self.transparent:
             cmd += ["-c:v", "qtrle", "-pix_fmt", "argb"]
         else:
             cmd += ["-c:v", "libx264", "-crf", "18", "-preset", "medium",
                     "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
         cmd += ["-c:a", "aac", "-b:a", "128k", "-shortest",
-                "-map", "0:v", "-map", "1:a", self.out_path]
+                "-map", "0:v", "-map", audio_map, self.out_path]
 
         self.log(f"渲染 {self.total} 帧 ({self.total / FPS:.2f}s, "
                  f"{'透明 MOV' if self.transparent else 'MP4'}) → {self.out_path}")
@@ -674,7 +695,7 @@ def main(argv):
     ap = argparse.ArgumentParser(description="CutKit — 拖照片效果演示生成")
     ap.add_argument("photo", help="要上传演示的照片（任意比例）")
     ap.add_argument("-o", "--out", default=None)
-    ap.add_argument("--caption", default="Upload Your Photo")
+    ap.add_argument("--caption", default="")
     ap.add_argument("--caption-style", default="plain",
                     choices=[k for k, _, _ in CAPTION_STYLES])
     ap.add_argument("--caption-y", type=float, default=CAPTION_Y,
