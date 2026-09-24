@@ -16,7 +16,7 @@ from render import ffmpeg_exe
 
 MODE_LABEL = {
     "render": "前后对比", "screen": "录屏步骤", "demo": "拖照片演示",
-    "ring": "圆环箭头", "": "其他",
+    "ring": "圆环箭头", "photo_card": "照片卡片＋", "": "其他",
 }
 
 

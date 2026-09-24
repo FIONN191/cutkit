@@ -271,7 +271,7 @@ def _smooth(a):
 # progress    进度条还原：顶部扫描线 + 处理进度条
 # comment     评论区驱动：先出一条评论卡，再还原
 # grid        九宫格多米诺：多对图同屏，逐格翻转
-REVEAL_MODES = ("linger", "sweep", "once", "reverse", "wipe", "flicker",
+REVEAL_MODES = ("linger", "sweep", "once", "clean", "reverse", "wipe", "flicker",
                 "progress", "comment", "grid")
 _SLIDER_LIKE = ("linger", "sweep", "once", "comment")
 
@@ -535,6 +535,8 @@ class Renderer:
     def _scene_frame(self, si, tf, progress):
         sc = self.scenes[si]
         m = self.reveal
+        if m == "clean":
+            return self._comp_clean(sc, tf)
         if m == "reverse":
             return self._comp_reverse(sc, tf)
         if m == "wipe":
@@ -700,6 +702,20 @@ class Renderer:
                 frame.paste(cell, (x, y))
         return frame
 
+    def _comp_clean(self, sc, tf):
+        """无杆匀速揭示：前 72% 滑完全幅，后 28% 停留在 After。
+
+        两图固定不动，仅移动裁切边界；不绘制分界线或手柄。
+        参考 2026-09-10 的 11.2 秒视频，约 8 秒完成揭示。
+        """
+        amount = max(0.0, min(1.0, tf / 0.72))
+        cut = int(round(amount * self.CW))
+        frame = sc["before"].copy()
+        if cut:
+            left, right = (0, cut) if self.ltr else (self.CW - cut, self.CW)
+            frame.paste(sc["after"].crop((left, 0, right, self.CH)), (left, 0))
+        return frame
+
     def _comp_slider(self, sc, tf):
         x = _slider_x(tf, self.slider_mode)
         if self.ltr:
@@ -829,7 +845,7 @@ class Renderer:
                "-s", f"{self.W}x{self.H}", "-r", str(self.fps), "-i", "-"]
         if self.audio_path:
             cmd += ["-i", self.audio_path, "-map", "0:v", "-map", "1:a",
-                    "-c:a", "aac", "-b:a", "192k", "-shortest"]
+                    "-af", "apad", "-c:a", "aac", "-b:a", "192k", "-shortest"]
         cmd += ["-c:v", "libx264", "-preset", self.preset, "-crf", str(self.crf),
                 "-pix_fmt", "yuv420p", "-movflags", "+faststart", self.out_path]
         self.log(f"开始编码 → {self.out_path}")
@@ -852,6 +868,7 @@ class Renderer:
         except Exception:
             broken = True
         err = proc.stderr.read()
+        proc.stderr.close()
         proc.wait()
         if proc.returncode != 0 or broken:
             bail_if_cancelled(proc, self.out_path)
@@ -960,7 +977,7 @@ def main(argv):
     ap.add_argument("--transition", choices=("spin", "none"), default="spin")
     ap.add_argument("--slider", "--reveal", dest="slider",
                     choices=REVEAL_MODES, default="sweep",
-                    help="对比展示方式: sweep=来回扫动(默认) once=只滑一次 "
+                    help="对比展示方式: sweep=来回扫动(默认) once=只滑一次 clean=无杆匀速滑动 "
                          "reverse=反向污染 wipe=手指擦除 flicker=硬切闪频 "
                          "progress=进度条 comment=评论区驱动 grid=九宫格")
     ap.add_argument("--direction", choices=("rtl", "ltr"), default="rtl",

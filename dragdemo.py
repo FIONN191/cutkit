@@ -34,7 +34,9 @@ PILL_R = 24
 PILL_FILL = (210, 30, 247)
 
 # 可选字体。空路径 = 交给 render._font 按文字内容自动挑（中文走黑体，西文走 HelveticaNeue）。
+DEFAULT_CAPTION_FONT = "sukhumvit"
 FONTS = [
+    ("sukhumvit", "Sukhumvit Set Semi Bold", "/System/Library/Fonts/Supplemental/SukhumvitSet.ttc"),
     ("system",   "系统", ""),
     ("helvetica", "Helvetica Neue", "/System/Library/Fonts/HelveticaNeue.ttc"),
     ("avenir",   "Avenir Next", "/System/Library/Fonts/Avenir Next.ttc"),
@@ -59,16 +61,25 @@ SPEED_PRESETS = [
 ]
 
 
-def caption_font(size, text, key="system"):
+def caption_font(size, text, key=DEFAULT_CAPTION_FONT):
     """按选择拿字体；选了具体字体但文本含中文而该字体没有中文字形时，退回自动选择。"""
-    path = _FONT_PATHS.get(key or "system", "")
+    key = key or DEFAULT_CAPTION_FONT
+    if key == DEFAULT_CAPTION_FONT and _has_cjk(text):
+        return _font(size, "regular", text)
+    path = _FONT_PATHS.get(key, "")
     if path and os.path.exists(path):
         try:
-            f = ImageFont.truetype(path, size)
+            f = ImageFont.truetype(path, size, index=4 if key == "sukhumvit" else 0)
             if not _has_cjk(text) or f.getmask("变").getbbox():
                 return f
         except Exception:
             pass
+    if key == DEFAULT_CAPTION_FONT:
+        # Other platforms use a regular sans-serif when the macOS font is absent.
+        for fallback in ("C:/Windows/Fonts/arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
+            if os.path.exists(fallback):
+                return ImageFont.truetype(fallback, size)
+        return _font(size, "regular", text)
     return _font(size, "bold", text)
 PILL_PAD = 58                      # 文字左右内边距
 ZONE = (139, 402, 936, 1272)       # 虚线上传框
@@ -163,7 +174,7 @@ CAPTION_STYLE_KEYS = {k for k, _, _ in CAPTION_STYLES}
 _CAPTION_STYLE_MAP = {k: v for k, _, v in CAPTION_STYLES}
 
 
-def build_pill(caption, style="pill_pink", y=CAPTION_Y, font_key="system"):
+def build_pill(caption, style="pill_pink", y=CAPTION_Y, font_key=DEFAULT_CAPTION_FONT):
     """标题单独出一张透明图 —— 它要盖在转场蒙版之上，保持不被压暗。
 
     y 是标题中心占画面高的比例，界面上用滑杆调、旁边有预览。
@@ -212,7 +223,7 @@ def build_static():
 def load_photo(path, box=PHOTO_BOX, scale=2):
     """按落定框的比例裁切照片，存 2 倍分辨率供逐帧缩放。"""
     bw, bh = box[2] - box[0], box[3] - box[1]
-    img = ImageOps.exif_transpose(Image.open(path).convert("RGB"))
+    img = _source_image(path)
     img = ImageOps.fit(img, (bw * scale, bh * scale), method=Image.LANCZOS)
     return _rounded(img, PHOTO_R * scale)
 
@@ -250,16 +261,25 @@ def target_box_for_aspect(aspect):
         th = FIT_MAX_H
         tw = round(th * aspect)
     cx = W // 2
-    return (round(cx - tw / 2), round(FIT_CY - th / 2),
-            round(cx + tw / 2), round(FIT_CY + th / 2))
+    # Tall portraits must leave the same header space as the fixed upload zone.
+    top = max(ZONE[1], round(FIT_CY - th / 2))
+    return (round(cx - tw / 2), top, round(cx + tw / 2), top + th)
+
+
+def _source_image(source):
+    """Load a file or an in-memory placeholder with the same EXIF orientation."""
+    if isinstance(source, Image.Image):
+        return ImageOps.exif_transpose(source).convert("RGB")
+    with Image.open(source) as image:
+        return ImageOps.exif_transpose(image).convert("RGB")
 
 
 # ---------- 卡片 / 光标 ----------
 def paste_card(base, source, x, y, w, aspect, angle, shadow_alpha=145,
-               border=True):
+               border=True, preserve_aspect=False):
     """把照片当成一张卡片贴上去：圆角 + 白边 + 投影 + 旋转。"""
     iw = max(2, round(w))
-    ih = max(2, round(iw / max(0.35, min(2.4, aspect))))
+    ih = max(2, round(iw / (aspect if preserve_aspect else max(0.35, min(2.4, aspect)))))
     radius = max(12, round(iw * 0.035))
     card = ImageOps.fit(source, (iw, ih), method=Image.LANCZOS)
     card = _rounded(card.convert("RGB"), radius)
@@ -362,23 +382,25 @@ def photo_state(t):
 
 
 # ---------- 拖拽音效（合成，无需素材） ----------
-def create_audio(path, dur, drag0=D_DRAG0, snap=D_SNAP):
+def create_audio(path, dur, drag0=D_DRAG0, snap=D_SNAP, delays=(0.0,)):
     sr = 48000
     n = max(1, round(dur * sr))
     t = np.arange(n, dtype=np.float64) / sr
     a = np.zeros(n)
     rng = np.random.default_rng(7)
-    m = (t >= drag0) & (t <= snap)                 # 拖动的风声
-    if m.any():
-        p = (t[m] - drag0) / max(1e-6, snap - drag0)
-        env = np.sin(np.pi * p) ** 1.4
-        sm = np.convolve(rng.normal(0, 1, int(m.sum())), np.ones(55) / 55, mode="same")
-        a[m] += 0.20 * env * sm + 0.018 * env * np.sin(2 * np.pi * (165 + 260 * p) * t[m])
-    c = (t >= snap) & (t <= snap + 0.32)           # 吸附的咔哒
-    if c.any():
-        ct = t[c] - snap
-        a[c] += 0.19 * np.exp(-24 * ct) * np.sin(2 * np.pi * (720 + 420 * ct) * ct)
-        a[c] += 0.10 * np.exp(-12 * ct) * np.sin(2 * np.pi * 115 * ct)
+    for delay in delays:
+        start, land = drag0 + delay, snap + delay
+        m = (t >= start) & (t <= land)                 # 拖动的风声
+        if m.any():
+            p = (t[m] - start) / max(1e-6, land - start)
+            env = np.sin(np.pi * p) ** 1.4
+            sm = np.convolve(rng.normal(0, 1, int(m.sum())), np.ones(55) / 55, mode="same")
+            a[m] += 0.20 * env * sm + 0.018 * env * np.sin(2 * np.pi * (165 + 260 * p) * t[m])
+        c = (t >= land) & (t <= land + 0.32)           # 吸附的咔哒
+        if c.any():
+            ct = t[c] - land
+            a[c] += 0.19 * np.exp(-24 * ct) * np.sin(2 * np.pi * (720 + 420 * ct) * ct)
+            a[c] += 0.10 * np.exp(-12 * ct) * np.sin(2 * np.pi * 115 * ct)
     a = np.clip(a / max(1e-8, np.abs(a).max()) * 0.48, -1, 1)
     with wave.open(str(path), "wb") as wv:
         wv.setnchannels(1); wv.setsampwidth(2); wv.setframerate(sr)
@@ -425,6 +447,21 @@ class TransitionStream:
                 pass
 
 
+def caption_preview(photo=None, photo2=None, upload_mode="single", motion="drag",
+                    caption="", caption_style="plain", caption_y=CAPTION_Y,
+                    caption_font_key=DEFAULT_CAPTION_FONT, transparent=False):
+    """Return the export's opening frame, without encoding or transition decoding."""
+    def source(path):
+        return path if path and os.path.isfile(path) else Image.new("RGB", (600, 800))
+
+    demo = DragDemo(source(photo), "", photo2=source(photo2), upload_mode=upload_mode,
+                    motion=motion, caption=caption.strip(), caption_style=caption_style,
+                    caption_y=caption_y, caption_font_key=caption_font_key,
+                    transparent=transparent, use_transition=False, sound=False)
+    demo.prepare_scene()
+    return demo.frame_at(0)
+
+
 class DragDemo:
     """把一张照片做成"拖进上传框"的演示片。
 
@@ -437,18 +474,25 @@ class DragDemo:
                  motion="drag", transparent=False, aspect_fit=None,
                  cursor=None, sound=True, glow=True, use_transition=True,
                  caption_style="plain", caption_y=CAPTION_Y,
-                 caption_font_key="system", duration=None,
-                 progress=None, log=None):
+                 caption_font_key=DEFAULT_CAPTION_FONT, duration=None,
+                 progress=None, log=None, photo2=None, upload_mode="single"):
         self.tmp_dir = tmp_dir or os.path.join(
             os.path.expanduser("~/Library/Caches"), "CutKit")
         self.photo_path = photo
+        self.upload_mode = upload_mode
+        if upload_mode not in ("single", "sequence", "together", "replace"):
+            raise ValueError("未知双图效果")
+        self.photo2_path = photo2
+        if upload_mode != "single" and not isinstance(photo2, Image.Image) and (not photo2 or not os.path.isfile(photo2)):
+            raise ValueError("请先选择第二张照片")
+        self.dual = upload_mode != "single"
         self.out_path = out_path
         self.caption = caption or ""
         self.caption_style = (caption_style if caption_style in CAPTION_STYLE_KEYS
                               else "plain")
         self.caption_y = float(caption_y)
         self.caption_font_key = (caption_font_key if caption_font_key in FONT_KEYS
-                                 else "system")
+                                 else DEFAULT_CAPTION_FONT)
         self.result_path = result or None
         self.motion = motion if motion in ("slide", "drag") else "slide"
         self.transparent = bool(transparent)
@@ -473,6 +517,9 @@ class DragDemo:
             (T_SETTLE if self.motion == "slide" else D_SETTLE) + 0.8
         # 自然时长（所有关键点都按这个时间轴定义），再按目标时长整体缩放。
         # 缩放放在「帧 → 时间」这一步，所有动作关键点就自动跟着走，不用逐个改。
+        if self.dual:
+            self.t_trans = D_SETTLE + 0.15 + (0 if upload_mode == "together" else D_SETTLE)
+            end = self.t_trans + (self.trans_dur if use_transition else 0.8)
         natural = end + self.tail
         try:
             want = float(duration) if duration else 0.0
@@ -551,6 +598,55 @@ class DragDemo:
                             rel if rel > 0 else press * 0.12)
         return frame
 
+    def _frame_dual(self, t):
+        frame = Image.new("RGBA", (W, H), (0, 0, 0, 0 if self.transparent else 255))
+        replace = self.upload_mode == "replace"
+        if replace:
+            _dashed_round_rect(ImageDraw.Draw(frame),
+                               (W/2-392, H*.53-462, W/2+392, H*.53+462),
+                               24, 20, 14, 4, (255,255,255,200))
+        delay = 0 if self.upload_mode == "together" else D_SETTLE
+        for i, source in enumerate(self.dual_photos):
+            local = t - i * delay
+            if replace and i == 0 and t >= delay + D_SNAP:
+                continue
+            aspect = source.width / source.height
+            maxw, maxh = (760, 900) if replace else (430, 720)
+            width = min(maxw, maxh * aspect)
+            height = width / aspect
+            cx = W / 2 if replace else W * (0.26 if i == 0 else 0.74)
+            cy = H * 0.53
+            box = (cx-width/2-12, cy-height/2-12, cx+width/2+12, cy+height/2+12)
+            if not replace:
+                _dashed_round_rect(ImageDraw.Draw(frame), box, 24, 20, 14, 4, (255,255,255,200))
+            if local < D_APPEAR:
+                continue
+            u = _clamp((local-D_DRAG0)/(D_SNAP-D_DRAG0))
+            progress = _ease_in_out_cubic(u)
+            scale = (0.65 + 0.35 * progress) * _clamp((local-D_APPEAR)/0.25)
+            if local >= D_SNAP:
+                scale = 1 + 0.035 * (1-_clamp((local-D_SNAP)/0.42))
+            w = width * scale
+            x = cx-w/2
+            y = cy-height/2 + (1-progress)*500
+            if self.motion == "slide":
+                x -= (1-progress)*240
+            iw, ih = paste_card(frame, source, x, y, w, aspect, (1-progress)*-4,
+                                shadow_alpha=0 if self.transparent else 145, preserve_aspect=True)
+            if self.cursor and D_APPEAR <= local < D_CURSOR_OFF:
+                draw_cursor(frame, x+iw*.74, y+ih*.72)
+        if self.dual_result is not None and self.trans_dur:
+            amount = _clamp((t-self.t_trans-self.trans_dur*REVEAL_AT)/0.32)
+            if amount:
+                result_layer = Image.new("RGBA", (W,H), (0,0,0,0 if self.transparent else 255))
+                src = self.dual_result
+                aspect = src.width/src.height
+                width = min(760, 1000*aspect)
+                paste_card(result_layer, src, (W-width)/2, H*.53-width/aspect/2,
+                           width, aspect, 0, shadow_alpha=0, preserve_aspect=True)
+                frame = Image.blend(frame, result_layer, _smooth(amount))
+        return frame
+
     def _photo_now(self, t):
         """转场跑过 REVEAL_AT 后把结果图淡进来。"""
         if self.result is None or not self.trans_dur:
@@ -563,7 +659,7 @@ class DragDemo:
 
     def frame_at(self, n):
         t = n / FPS * self.speed
-        frame = self._frame_drag(t) if self.motion == "drag" else self._frame_slide(t)
+        frame = self._frame_dual(t) if self.dual else (self._frame_drag(t) if self.motion == "drag" else self._frame_slide(t))
         if self.stream is not None and t >= self.t_trans:
             ov = self.stream.next()
             if ov is not None:
@@ -572,21 +668,18 @@ class DragDemo:
             frame.alpha_composite(self.pill)
         return frame if self.transparent else frame.convert("RGB")
 
-    # ---------- 渲染 ----------
-    def render(self):
-        os.makedirs(self.tmp_dir, exist_ok=True)
-        out_dir = os.path.dirname(self.out_path)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-
-        src = ImageOps.exif_transpose(Image.open(self.photo_path).convert("RGB"))
+    def prepare_scene(self):
+        """Prepare the exact same layout and caption for preview and video export."""
+        src = _source_image(self.photo_path)
         self.aspect = src.width / src.height
+        if self.dual:
+            self.dual_photos = [src, _source_image(self.photo2_path)]
+            self.dual_result = _source_image(self.result_path) if self.result_path else None
         if self.motion == "drag":
             self.target = target_box_for_aspect(self.aspect) if self.aspect_fit \
                 else (PHOTO_BOX[0], PHOTO_BOX[1], PHOTO_BOX[2], PHOTO_BOX[3])
             self.photo = src
-            self.result = ImageOps.exif_transpose(
-                Image.open(self.result_path).convert("RGB")) if self.result_path else None
+            self.result = _source_image(self.result_path) if self.result_path else None
             if self.result is not None:
                 self.result = ImageOps.fit(self.result, self.photo.size, method=Image.LANCZOS)
             # 拖拽风格自己逐帧画虚线框和加号，底层只要一张纯黑；
@@ -607,6 +700,15 @@ class DragDemo:
         self.pill = (build_pill(self.caption, self.caption_style,
                                 self.caption_y, self.caption_font_key)
                      if (self.caption and not self.transparent) else None)
+        self.stream = None
+
+    # ---------- 渲染 ----------
+    def render(self):
+        os.makedirs(self.tmp_dir, exist_ok=True)
+        out_dir = os.path.dirname(self.out_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        self.prepare_scene()
         self.stream = (TransitionStream(self.transition, speed=self.speed)
                        if self.transition else None)
 
@@ -615,8 +717,9 @@ class DragDemo:
             wav = os.path.join(self.tmp_dir, "dragsfx.wav")
             # 音效的时间点要换算到输出时间轴上，否则变速后咔哒声会对不上吸附
             create_audio(wav, self.total / FPS,
-                         drag0=(D_DRAG0 if self.motion == "drag" else T_IN) / self.speed,
-                         snap=(D_SNAP if self.motion == "drag" else T_LAND) / self.speed)
+                         drag0=(D_DRAG0 if self.dual or self.motion == "drag" else T_IN) / self.speed,
+                         snap=(D_SNAP if self.dual or self.motion == "drag" else T_LAND) / self.speed,
+                         delays=(0.0, D_SETTLE/self.speed) if self.dual and self.upload_mode != "together" else (0.0,))
 
         pix = "rgba" if self.transparent else "rgb24"
         cmd = [ffmpeg_exe(), "-y", "-v", "error",
@@ -700,10 +803,12 @@ def main(argv):
                     choices=[k for k, _, _ in CAPTION_STYLES])
     ap.add_argument("--caption-y", type=float, default=CAPTION_Y,
                     help="标题中心占画面高的比例，0~1")
-    ap.add_argument("--font", dest="font_key", default="system",
+    ap.add_argument("--font", dest="font_key", default=DEFAULT_CAPTION_FONT,
                     choices=[k for k, _, _ in FONTS])
     ap.add_argument("--duration", type=float, default=SPEED_PRESETS[0][2],
                     help=f"成片总时长（秒），默认 {SPEED_PRESETS[0][2]}；传 0 = 按自然时长")
+    ap.add_argument("--photo2", default=None, help="第二张输入照片")
+    ap.add_argument("--upload-mode", choices=("single", "sequence", "together", "replace"), default="single")
     ap.add_argument("--result", default=None, help="AI 结果图（转场后淡入）")
     ap.add_argument("--motion", choices=("slide", "drag"), default="slide",
                     help="slide=复刻参考片飞入; drag=光标拖拽（任意比例自适应）")
@@ -730,7 +835,7 @@ def main(argv):
              use_transition=args.use_transition,
              caption_style=args.caption_style,
              caption_y=args.caption_y, caption_font_key=args.font_key,
-             duration=args.duration,
+             duration=args.duration, photo2=args.photo2, upload_mode=args.upload_mode,
              progress=lambda d, t: (d % 30 == 0) and print(f"{d}/{t}"),
              log=print).render()
     print("OK", out)

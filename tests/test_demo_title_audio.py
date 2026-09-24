@@ -25,7 +25,10 @@ def run():
         title = client.open(base + '/caption_preview?text=Test').read()
         assert blank == omitted and blank != title
         top = np.array(Image.open(io.BytesIO(blank)))[:70]
-        assert top.max() == 0, 'blank preview unexpectedly has a title'
+        # The preview now includes the export's dark vignette; a blank title
+        # leaves that backdrop visible, while real title glyphs are bright.
+        assert top.max() < 30, 'blank preview unexpectedly has a title'
+        assert np.array(Image.open(io.BytesIO(title)))[:70].max() > 200
     finally:
         server.shutdown()
         server.server_close()

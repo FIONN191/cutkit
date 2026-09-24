@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import traceback
 import urllib.parse
@@ -27,6 +28,7 @@ import rosie
 import rosiecut
 import ringarrow
 import adcut
+import adending
 import i18n
 from app_version import APP_VERSION
 
@@ -52,9 +54,10 @@ SETTING_KEYS = ("jy_auto", "jy_dir",
                 "scene_sec", "transition", "slider", "audio", "demo_caption",
                 "comment_user", "comment_text", "progress_text", "direction",
                 "pair_groups", "demo_caption_style", "demo_caption_y",
-                "demo_font", "demo_duration", "demo_motion", "demo_caption_mode",
-                "theme", "accent", "lang")
+                "demo_font", "demo_duration", "demo_motion", "demo_upload_mode", "demo_caption_mode",
+                "theme", "accent", "lang", "pair_ending")
 DEFAULT_SETTINGS = {
+    "pair_ending": "",
     "demo_caption_mode": "none",
     "jy_auto": "", "jy_dir": "",
     "caption": "", "caption_size": "55",
@@ -67,7 +70,7 @@ DEFAULT_SETTINGS = {
     "direction": "rtl",
     "pair_groups": "2", "theme": "dark", "accent": "orange", "lang": "zh",
     "demo_caption_style": "plain", "demo_caption_y": "18.5",
-    "demo_font": "system", "demo_duration": "1.9", "demo_motion": "drag",
+    "demo_font": dragdemo.DEFAULT_CAPTION_FONT, "demo_duration": "1.9", "demo_motion": "drag", "demo_upload_mode": "single",
 }
 
 
@@ -219,7 +222,7 @@ PAIR_PRESET_PATH = os.path.join(app_support_dir(), "pair_presets.json")
 PAIR_PRESET_KEYS = ("caption", "caption_size", "label_before", "label_after",
                     "scene_sec", "transition", "slider", "direction",
                     "comment_user", "comment_text", "progress_text",
-                    "align_on", "align_fill")
+                    "align_on", "align_fill", "pair_ending")
 
 
 def pair_presets_load():
@@ -451,12 +454,20 @@ def worker_ad(opts):
 
 
 def worker(pairs, opts):
+    ending_tmp = None
     try:
+        ending_path = opts.get("ending_path")
+        ending_info = adending.media_info(ending_path) if ending_path else None
+        ending_frames = round(ending_info["duration"] * 30) if ending_info else 0
+        out_path = opts["out"]
+        if ending_path:
+            ending_tmp = tempfile.TemporaryDirectory(prefix="cutkit-ending-")
+            out_path = os.path.join(ending_tmp.name, "comparison.mp4")
         def prog(d, t):
             with LOCK:
-                STATE["prog_done"], STATE["prog_total"] = d, t
+                STATE["prog_done"], STATE["prog_total"] = d, t + ending_frames
         r = render.Renderer(
-            pairs, opts["out"],
+            pairs, out_path,
             caption=opts["caption"], caption_size=opts["caption_size"],
             label_before=opts["label_before"], label_after=opts["label_after"],
             scene_sec=opts["scene_sec"],
@@ -469,8 +480,14 @@ def worker(pairs, opts):
             transition=opts["transition"], audio_path=opts["audio"] or None,
             progress=prog, log=log)
         out = r.render()
+        if ending_path:
+            out = adending.append_ending(out, ending_path, opts["out"],
+                                        body_duration=r.total / r.fps,
+                                        width=r.W, height=r.H, fps=r.fps,
+                                        log=log, info=ending_info)
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, out=out)
+            STATE["prog_done"] = STATE["prog_total"]
         _record(out, STATE.get("kind", ""))
     except render.Cancelled:
         log("已取消 ⏹")
@@ -480,6 +497,9 @@ def worker(pairs, opts):
         log("出错了:\n" + traceback.format_exc(limit=8))
         with LOCK:
             STATE.update(busy=False, done=True, ok=False)
+    finally:
+        if ending_tmp is not None:
+            ending_tmp.cleanup()
 
 
 def worker_analyze(video):
@@ -538,8 +558,9 @@ def worker_demo(photo, result, caption, out, opts=None):
                           use_transition=o.get("use_transition", True),
                           caption_style=o.get("caption_style", "plain"),
                           caption_y=o.get("caption_y", dragdemo.CAPTION_Y),
-                          caption_font_key=o.get("caption_font_key", "system"),
-                          duration=o.get("duration"),
+                          caption_font_key=o.get("caption_font_key", dragdemo.DEFAULT_CAPTION_FONT),
+                          duration=o.get("duration"), photo2=o.get("photo2"),
+                          upload_mode=o.get("upload_mode", "single"),
                           progress=prog, log=log).render()
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, out=out)
@@ -554,18 +575,43 @@ def worker_demo(photo, result, caption, out, opts=None):
             STATE.update(busy=False, done=True, ok=False)
 
 
+def ring_options(data):
+    """Use identical, bounded geometry for preview and exported stickers."""
+    import math
+    style = data.get("style", "ring")
+    if style not in ("ring", "photo_card"):
+        raise ValueError("未知角标样式")
+    defaults = (.166, .745) if style == "photo_card" else ringarrow.CENTER
+    def number(key, default, low, high):
+        value = float(data.get(key, default))
+        if not math.isfinite(value) or not low <= value <= high:
+            raise ValueError(f"{key} 必须在 {low}–{high} 之间")
+        return value
+    opts = dict(style=style, W=int(number("W", 1080, 64, 3840)),
+                H=int(number("H", 1920, 64, 3840)),
+                cx=number("cx", defaults[0], 0, 1), cy=number("cy", defaults[1], 0, 1),
+                radius=number("radius", .161, .08, .30),
+                card_width=number("card_width", .245, .08, .6),
+                crop_x=number("crop_x", .5, 0, 1), crop_y=number("crop_y", .4, 0, 1),
+                dur=number("dur", 8, .1, 30), pop=bool(data.get("pop")))
+    if opts["W"] * opts["H"] > 3840 * 2160:
+        raise ValueError("画布不能超过 3840 × 2160 像素")
+    return opts
+
+
 def worker_ring(opts):
     try:
         badge = ringarrow.build_badge(
             opts["photo"], opts["W"], opts["H"],
             center=(opts["cx"], opts["cy"]), radius=opts["radius"],
-            crop_x=opts["crop_x"], crop_y=opts["crop_y"], log=log)
+            crop_x=opts["crop_x"], crop_y=opts["crop_y"], log=log,
+            style=opts["style"], card_width=opts["card_width"])
         badge.save(os.path.splitext(opts["out"])[0] + ".png")
         ringarrow.render_mov(badge, opts["out"], dur=opts["dur"],
-                             pop=opts["pop"], log=log)
+                             pop=opts["pop"], log=log, center=(opts["cx"], opts["cy"]))
         with LOCK:
             STATE.update(busy=False, done=True, ok=True, out=opts["out"])
-        _record(opts["out"], "ring")
+        _record(opts["out"], "photo_card" if opts["style"] == "photo_card" else "ring")
     except render.Cancelled:
         log("已取消 ⏹")
         with LOCK:
@@ -842,6 +888,7 @@ border-radius:10px;display:none}
 <option value="linger">滑杆·中段放慢</option>
 <option value="sweep">滑杆·来回扫</option>
 <option value="once">滑杆·滑到底</option>
+<option value="clean">无杆·匀速滑动</option>
 <option value="reverse">反向污染</option>
 <option value="wipe">手指擦除</option>
 <option value="flicker">硬切闪频</option>
@@ -863,6 +910,11 @@ border-radius:10px;display:none}
 <button class="small" onclick="clearAudio()">清除</button>
 <span class="dzhint">或拖音频到这里</span></div></div>
 <div class="hint" id="audioName" style="margin-top:4px"></div></div>
+<div style="grid-column:1/-1">
+<label style="display:flex;align-items:center;gap:8px;color:var(--txt)">
+<input type="checkbox" id="pairEnding" style="width:auto" onchange="pairEndingChanged()"> 添加广告投放结尾</label>
+<div class="hint" style="margin-top:4px">将最后一帧定格，叠加内置 Fotor 透明结尾及原声，成片增加约 2.9 秒。</div>
+</div>
 </div>
 </div>
 
@@ -943,12 +995,24 @@ border-radius:10px;display:none}
 <div id="modeDemo" class="mode">
 <div class="card">
 <h2>① 照片</h2>
+<label>上传方式</label>
+<select id="demoUploadMode" onchange="demoUploadChanged()">
+<option value="single">单图上传</option>
+<option value="sequence">双图 · 左右依次拖入</option>
+<option value="together">双图 · 左右同时进入</option>
+<option value="replace">双图 · 同框先后替换</option>
+</select>
 <div class="dz" id="zDemoPhoto">
 <div class="row">
 <button onclick="pickDemoPhoto()">选择要上传演示的照片…</button>
 <div class="folder" id="demoPhoto"></div>
 </div>
 <div class="dzhint">或把照片直接拖到这里</div>
+</div>
+<div class="dz" id="zDemoPhoto2" style="display:none;margin-top:10px">
+<button onclick="pickDemoPhoto2()">选择第二张照片…</button>
+<button class="small" onclick="DPHOTO2='';$('demoPhoto2').textContent='';capPreview();">清除</button>
+<div class="folder" id="demoPhoto2"></div><div class="dzhint">或把第二张照片拖到这里</div>
 </div>
 <div class="dz" id="zDemoResult" style="margin-top:10px">
 <div class="row">
@@ -958,7 +1022,7 @@ border-radius:10px;display:none}
 </div>
 <div class="dzhint">或把结果图直接拖到这里</div>
 </div>
-<div class="hint">复刻「上传一张照片」的教程演示：虚线上传框 → 照片飞入落框回弹 → Fotor 彩色转场（进度环 + AI Generated 徽章，自带压暗）。选了结果图的话，徽章出现时会淡入成结果。</div>
+<div class="hint">支持单图上传，以及双图左右依次拖入、左右同时进入、同框先后替换。双图动作完成后再播放 Fotor 转场；可选一张 AI 结果图，转场时合并展示结果。双图建议使用 3–5 秒，避免动作太快。</div>
 </div>
 
 <div class="card">
@@ -1018,7 +1082,9 @@ border-radius:10px;display:none}
 
 <div id="modeRing" class="mode">
 <div class="card">
-<h2>① 原图 <span class="hint" style="margin:0">任意比例都行，自动圆形裁切</span></h2>
+<h2>① 原图 <span class="hint" style="margin:0">任意比例都行，按所选样式裁切</span></h2>
+<div style="margin-bottom:14px"><label>角标样式</label>
+<select id="ringStyle" onchange="ringStyleChanged()"><option value="ring">圆环箭头</option><option value="photo_card">照片卡片＋</option></select></div>
 <div class="dz" id="zRing">
 <div class="row">
 <button onclick="pickRingPhoto()">选择原图…</button>
@@ -1034,15 +1100,17 @@ border-radius:10px;display:none}
 <input type="range" id="crop_x" min="0" max="1" step="0.02" value="0.5" oninput="ringChanged()"></div>
 <div><label>画面裁切 · 纵向 <span id="cyL">0.40</span></label>
 <input type="range" id="crop_y" min="0" max="1" step="0.02" value="0.4" oninput="ringChanged()"></div>
-<div><label>圆环大小 <span id="rL">0.161</span></label>
+<div id="ringSizeRow"><label>圆环大小 <span id="rL">0.161</span></label>
 <input type="range" id="radius" min="0.08" max="0.30" step="0.005" value="0.161" oninput="ringChanged()"></div>
+<div id="cardSizeRow" style="display:none"><label>卡片宽度 <span id="cardWidthL">0.245</span></label>
+<input type="range" id="cardWidth" min="0.08" max="0.6" step="0.005" value="0.245" oninput="ringChanged()"></div>
 <div><label>位置 X <span id="pxL">0.214</span></label>
 <input type="range" id="cx" min="0.05" max="0.95" step="0.01" value="0.214" oninput="ringChanged()"></div>
 <div><label>位置 Y <span id="pyL">0.780</span></label>
 <input type="range" id="cy" min="0.05" max="0.95" step="0.01" value="0.78" oninput="ringChanged()"></div>
 <div><label>画布尺寸</label><div class="row" style="gap:6px">
-<input id="ringW" type="number" value="1080" style="width:78px">
-<input id="ringH" type="number" value="1920" style="width:78px"></div></div>
+<input id="ringW" oninput="ringChanged()" type="number" value="1080" style="width:78px">
+<input id="ringH" oninput="ringChanged()" type="number" value="1920" style="width:78px"></div></div>
 </div>
 <div class="hint">默认位置/大小与竞品一致（左下角）。棋盘格代表透明区域。</div>
 </div>
@@ -1220,6 +1288,7 @@ border-radius:10px;display:none}
 <div><label>对比展示方式</label><select id="ad_slider">
 <option value="linger">滑杆·中段放慢</option>
 <option value="sweep">滑杆·来回扫</option><option value="once">滑杆·滑到底</option>
+<option value="clean">无杆·匀速滑动</option>
 <option value="wipe">手指擦除</option></select></div>
 <div><label>对比片段之间</label><select id="ad_transition">
 <option value="spin">旋转模糊</option><option value="none">直切</option></select></div>
@@ -1526,7 +1595,8 @@ const DZ={
   zZoom:       {kind:'image', status:'prog2',
                 apply:p=>{ZOOMPHOTO=p;$('zoomPhotoName').textContent=base(p);}},
   zDemoPhoto:  {kind:'image', status:'prog3',
-                apply:p=>{DPHOTO=p;$('demoPhoto').textContent=base(p);$('goDemo').disabled=false;}},
+                apply:p=>{DPHOTO=p;$('demoPhoto').textContent=base(p);$('goDemo').disabled=false;capPreview();}},
+  zDemoPhoto2: {kind:'image', status:'prog3', apply:p=>{DPHOTO2=p;$('demoPhoto2').textContent=base(p);capPreview();}},
   zDemoResult: {kind:'image', status:'prog3',
                 apply:p=>{DRESULT=p;$('demoResult').textContent=base(p);}},
   zRing:       {kind:'image', status:'prog4',
@@ -1741,6 +1811,7 @@ function wireNumPairs(){
   numPair('crop_x', 0, 1, 0.02, 'cxL');
   numPair('crop_y', 0, 1, 0.02, 'cyL');
   numPair('radius', 0.08, 0.30, 0.005, 'rL');
+  numPair('cardWidth', 0.08, 0.6, 0.005, 'cardWidthL');
   numPair('cx', 0.05, 0.95, 0.01, 'pxL');
   numPair('cy', 0.05, 0.95, 0.01, 'pyL');
   numPair('ringDur', 1, 30, 0.5);
@@ -1771,7 +1842,9 @@ function capPreview(){
   clearTimeout(capTimer);
   capTimer=setTimeout(()=>{                       // 拖滑杆时别每一帧都请求
     const q=new URLSearchParams({y:y, text:demoCaptionText(),
-      style:$('demoCaptionStyle').value, font:$('demoFont').value, t:Date.now()});
+      style:$('demoCaptionStyle').value, font:$('demoFont').value,
+      motion:$('demoMotion').value, transparent:$('demoTransparent').checked?'1':'0',
+      upload_mode:$('demoUploadMode').value, photo:DPHOTO, photo2:DPHOTO2, t:Date.now()});
     $('capPv').src='/caption_preview?'+q.toString();
   },120);
 }
@@ -1985,6 +2058,7 @@ function ppData(){
   const o={}; PP_TEXT.forEach(k=>o[k]=$(k).value);
   o.align_on   = $('alignOn').checked   ? '1' : '';
   o.align_fill = $('alignFill').checked ? '1' : '';
+  o.pair_ending = $('pairEnding').checked ? '1' : '';
   return o;
 }
 function renderPairPresets(){
@@ -2002,6 +2076,7 @@ function applyPairPreset(){
   PP_TEXT.forEach(k=>{if(p[k]!==undefined)$(k).value=p[k];});
   if(p.align_on!==undefined)$('alignOn').checked=!!p.align_on;
   if(p.align_fill!==undefined)$('alignFill').checked=!!p.align_fill;
+  $('pairEnding').checked = p.pair_ending === '1';
   alignChanged(); syncReveal(); syncNumPairs();
   $('pairPresetHint').textContent=tp('已套用：{}', n);
 }
@@ -2247,6 +2322,7 @@ const REVEAL_HINT={
   linger:'滑到底，但两头快、中间慢 —— 时间花在画面中段（人脸所在），边缘一带而过；前后各停一拍。',
   sweep:'滑杆左右来回扫动 —— 前三条用的就是这个。',
   once:'滑杆只滑一次并滑到底，从整张 Before 推到整张 After。',
+  clean:'两张图保持原位，分界匀速滑过全幅，无白线和手柄；前 72% 揭示 After，后 28% 停留。复刻参考视频请选择从左往右，顶部字幕及 Before/After 标签留空。',
   reverse:'先给完整成图（前 1 秒屏幕上是"奖励"不是绿色），绿色再从中心蔓延吞掉它，最后扫描线把画面还原。专治开头掉人。',
   wipe:'橡皮擦沿蛇形路径把滤镜抹掉，擦过的地方不再回来，画面里有"有人在操作"的实感。',
   flicker:'不做任何渐变，Before/After 直接硬切交替，前 1.7 秒闪 7 次后定格成图。视觉指纹和滑杆差最远。',
@@ -2259,29 +2335,44 @@ function syncReveal(){
   for(const c of ['rvcomment','rvprogress'])
     document.querySelectorAll('.'+c).forEach(e=>{
       e.style.display=(c==='rv'+v)?'':'none';});
-  const hasDir=['linger','sweep','once','comment','wipe','grid'].includes(v);
+  const hasDir=['linger','sweep','once','clean','comment','wipe','grid'].includes(v);
   document.querySelectorAll('.rvdir').forEach(e=>{e.style.display=hasDir?'':'none';});
 }
-let RPHOTO='', RTIMER=null;
+let RPHOTO='', RTIMER=null, RPREVIEW=0, RSTYLE='ring';
+const RPOSITIONS={ring:[.214,.78],photo_card:[.166,.745]};
+function ringStyleChanged(){
+  RPOSITIONS[RSTYLE]=[+$('cx').value,+$('cy').value];
+  RSTYLE=$('ringStyle').value;
+  [$('cx').value,$('cy').value]=RPOSITIONS[RSTYLE];
+  $('ringSizeRow').style.display=RSTYLE==='ring'?'':'none';
+  $('cardSizeRow').style.display=RSTYLE==='photo_card'?'':'none';
+  syncNumPairs(); ringChanged();
+}
 function ringParams(){
-  return {photo:RPHOTO,W:+$('ringW').value,H:+$('ringH').value,
+  return {photo:RPHOTO,style:$('ringStyle').value,card_width:+$('cardWidth').value,
+    W:+$('ringW').value,H:+$('ringH').value,
     cx:+$('cx').value,cy:+$('cy').value,radius:+$('radius').value,
     crop_x:+$('crop_x').value,crop_y:+$('crop_y').value,
     dur:+$('ringDur').value,pop:$('ringPop').checked};
 }
 async function ringPreview(){
   if(!RPHOTO)return;
+  const seq=++RPREVIEW;
   const r=await post('/ring_preview',ringParams());
+  if(seq!==RPREVIEW)return;
+  if(r.error){$('prog4').textContent=r.error;return;}
+  $('prog4').textContent='';
   if(r.png){$('ringPv').src=r.png;$('ringPv').style.display='';}
 }
 function ringChanged(){
   $('cxL').textContent=$('crop_x').value; $('cyL').textContent=$('crop_y').value;
   $('rL').textContent=$('radius').value; $('pxL').textContent=$('cx').value;
   $('pyL').textContent=$('cy').value;
+  ++RPREVIEW;
   clearTimeout(RTIMER); RTIMER=setTimeout(ringPreview,180);
 }
 async function pickRingPhoto(){
-  const r=await post('/pick_image',{prompt:'选择要放进圆环的原图'});
+  const r=await post('/pick_image',{prompt:'选择角标原图'});
   if(!r.path)return;
   RPHOTO=r.path; $('ringPhoto').textContent=base(RPHOTO);
   $('goRing').disabled=false; ringPreview();
@@ -2305,15 +2396,24 @@ async function pollRing(){
     else{$('prog4').textContent=s.cancelled?'已取消 ⏹':'失败 ❌（见下方日志）';}
   }
 }
-let DPHOTO='', DRESULT='';
+let DPHOTO='', DPHOTO2='', DRESULT='';
+function demoUploadChanged(){
+  $('zDemoPhoto2').style.display=$('demoUploadMode').value==='single'?'none':'';
+  capPreview();
+}
+async function pickDemoPhoto2(){
+  const r=await post('/pick_image',{prompt:'选择第二张照片'});
+  if(r.path){DPHOTO2=r.path;$('demoPhoto2').textContent=base(r.path);capPreview();}
+}
 async function pickDemoPhoto(){
   const r=await post('/pick_image',{prompt:'选择要上传演示的照片'});
   if(!r.path)return;
-  DPHOTO=r.path; $('demoPhoto').textContent=base(DPHOTO); $('goDemo').disabled=false;
+  DPHOTO=r.path; $('demoPhoto').textContent=base(DPHOTO); $('goDemo').disabled=false;capPreview();
 }
 function demoMotionChanged(){
   // 拖拽风格默认带光标
   $('demoCursor').checked = $('demoMotion').value==='drag';
+  capPreview();
 }
 function demoTransChanged(){
   const tp=$('demoTransparent').checked;
@@ -2327,7 +2427,7 @@ async function pickDemoResult(){
 function clearDemoResult(){DRESULT='';$('demoResult').textContent='';}
 async function runDemo(){
   if(!DPHOTO)return;
-  const r=await post('/run_demo',{photo:DPHOTO,result:DRESULT,caption:demoCaptionText(),caption_mode:$('demoCaptionMode').value,
+  const r=await post('/run_demo',{photo:DPHOTO,photo2:DPHOTO2,upload_mode:$('demoUploadMode').value,result:DRESULT,caption:demoCaptionText(),caption_mode:$('demoCaptionMode').value,
     motion:$('demoMotion').value, transparent:$('demoTransparent').checked,
     cursor:$('demoCursor').checked, sound:$('demoSound').checked,
     caption_style:$('demoCaptionStyle').value,
@@ -2424,12 +2524,16 @@ async function pollScreen(){
   }
 }
 let BUSY=false, POLL=null;
+async function pairEndingChanged(){
+  await post('/pair_ending', {enabled:$('pairEnding').checked});
+}
 async function run(){
   if(!PAIRS.length)return;
   const d={pairs:PAIRS,folder:FOLDER,audio:AUDIO};
   for(const k of ['caption','caption_size','label_before','label_after','scene_sec','transition','slider','direction','comment_user','comment_text','progress_text'])d[k]=$(k).value;
   // 对齐开关与手动微调必须一起送过去，否则后端只会走默认的「自动对齐」
-  d.pair_groups = String(GROUPS);   // /run 会按 SETTING_KEYS 全量写盘，不带上就被抹掉
+  d.pair_groups = String(GROUPS);
+  d.pair_ending = $('pairEnding').checked ? '1' : '';
   d.align_off  = !$('alignOn').checked;
   d.align_fill = $('alignFill').checked;
   d.nudges     = d.align_off ? {} : NUDGE;
@@ -2456,6 +2560,7 @@ async function poll(){
 }
 (async()=>{
   const s=await post('/settings');
+  $('pairEnding').checked = s.pair_ending === '1';
   for(const k of ['caption','caption_size','label_before','label_after','scene_sec','transition','slider','direction','comment_user','comment_text','progress_text'])
     if(s[k]!==undefined&&s[k]!=='')$(k).value=s[k];
   if(s.demo_caption)$('demoCaption').value=s.demo_caption;
@@ -2465,6 +2570,8 @@ async function poll(){
   if(s.demo_font)$('demoFont').value=s.demo_font;
   if(s.demo_duration)$('demoDur').value=s.demo_duration;
   if(s.demo_motion)$('demoMotion').value=s.demo_motion;
+  if(s.demo_upload_mode)$('demoUploadMode').value=s.demo_upload_mode;
+  demoUploadChanged();
   demoCaptionChanged();
   (s.speed_presets||[]).forEach(([k,,sec])=>{SPEED_SEC[k]=sec;});
   capPreview();
@@ -2503,16 +2610,16 @@ async function poll(){
 
 
 SHORTCUTS = [
-    ("AI 视频 · 模板", "https://www.fotor.com/apps/ai-video-generator/#from-template"),
-    ("AI 视频 · 新建", "https://www.fotor.com/apps/ai-video-generator/#from-create"),
-    ("AI 视频 · Magic Sync", "https://www.fotor.com/apps/ai-video-generator/#from-magic-sync"),
-    ("AI 图片创作", "https://www.fotor.com/images/create/"),
+    ("Fotor 视频模板", "https://www.fotor.com/apps/ai-video-generator/#from-template"),
+    ("Fotor 视频生成", "https://www.fotor.com/apps/ai-video-generator/#from-create"),
+    ("Magic Sync", "https://www.fotor.com/apps/ai-video-generator/#from-magic-sync"),
+    ("Fotor 图片生成", "https://www.fotor.com/images/create/"),
     ("Pinterest", "https://www.pinterest.com/"),
-    ("钉钉文档", "https://alidocs.dingtalk.com/i/nodes/ZX6GRezwJl5bRPBDfgX6KqdP8dqbropQ"
+    ("创意营销内容模板", "https://alidocs.dingtalk.com/i/nodes/ZX6GRezwJl5bRPBDfgX6KqdP8dqbropQ"
                  "?cid=76657130221&utm_source=im&utm_scene=person_space"
                  "&iframeQuery=utm_medium%253Dim_card%2526utm_source%253Dim"
                  "&utm_medium=im_card&corpId=dingcfe491e24cf0192a35c2f4657eb6378f"),
-    ("钉钉表格", "https://alidocs.dingtalk.com/spreadsheetv2/meeagJ10uzYWEwQ5/edit"
+    ("AI创意库", "https://alidocs.dingtalk.com/spreadsheetv2/meeagJ10uzYWEwQ5/edit"
                  "?cid=76657130221&type=s&docKey=oJGq75k2y9LdBlAK"
                  "&dentryKey=meeagJ10uzYWEwQ5&utm_source=im&utm_medium=im_card"
                  "&dontjump=true&chInfo=im"),
@@ -2586,7 +2693,8 @@ def render_page():
                      _options([(k, lab) for k, lab, _ in dragdemo.CAPTION_STYLES],
                               selected="plain"))
             .replace("<!--FONT_OPTIONS-->",
-                     _options([(k, lab) for k, lab, _ in dragdemo.FONTS]))
+                     _options([(k, lab) for k, lab, _ in dragdemo.FONTS],
+                              selected=dragdemo.DEFAULT_CAPTION_FONT))
             .replace("<!--SPEED_OPTIONS-->",
                      _options([(k, lab) for k, lab, _ in dragdemo.SPEED_PRESETS]))
             .replace("<!--SEG_TRANSITION_OPTIONS-->",
@@ -2645,19 +2753,17 @@ class Handler(BaseHTTPRequestHandler):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query, keep_blank_values=True)
             g = lambda k, d="": (q.get(k) or [d])[0]
             try:
-                y = float(g("y", str(dragdemo.CAPTION_Y)))
+                y = _clamp_float(g("y", str(dragdemo.CAPTION_Y)), dragdemo.CAPTION_Y, .04, .8)
             except ValueError:
                 y = dragdemo.CAPTION_Y
             try:
-                from PIL import Image as _Im, ImageDraw as _D
-                base = _Im.new("RGB", (dragdemo.W, dragdemo.H), (0, 0, 0))
-                d = _D.Draw(base, "RGBA")
-                dragdemo._dashed_round_rect(d, dragdemo.ZONE, dragdemo.ZONE_R,
-                                            dragdemo.DASH_ON, dragdemo.DASH_OFF,
-                                            dragdemo.DASH_W, dragdemo.DASH_COLOR)
-                pill = dragdemo.build_pill(g("text", ""),
-                                           g("style", "plain"), y, g("font", "system"))
-                base.paste(pill, (0, 0), pill)
+                from PIL import Image as _Im
+                base = dragdemo.caption_preview(
+                    photo=g("photo"), photo2=g("photo2"),
+                    upload_mode=g("upload_mode", "single"), motion=g("motion", "drag"),
+                    caption=g("text"), caption_style=g("style", "plain"),
+                    caption_y=y, caption_font_key=g("font", dragdemo.DEFAULT_CAPTION_FONT),
+                    transparent=g("transparent") == "1")
                 base.thumbnail((216, 384), _Im.LANCZOS)
                 buf = io.BytesIO()
                 base.save(buf, "PNG")
@@ -2920,6 +3026,10 @@ class Handler(BaseHTTPRequestHandler):
             elif act == "delete":
                 history.remove(rid, delete_file=bool(d.get("with_file")))
             self._json({"ok": True})
+        elif self.path == "/pair_ending":
+            d = self._read()
+            save_settings({"pair_ending": "1" if d.get("enabled") is True else ""})
+            self._json({"ok": True})
         elif self.path == "/settings":
             r = load_settings()
             r["pair_presets"] = pair_presets_load()
@@ -3042,13 +3152,12 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/ring_preview":
             d = self._read()
             try:
+                opts = ring_options(d)
                 badge = ringarrow.build_badge(
-                    d.get("photo") or "", int(d.get("W") or 1080),
-                    int(d.get("H") or 1920),
-                    center=(float(d.get("cx") or .214), float(d.get("cy") or .78)),
-                    radius=float(d.get("radius") or .161),
-                    crop_x=float(d.get("crop_x") or .5),
-                    crop_y=float(d.get("crop_y") or .4))
+                    d.get("photo") or "", opts["W"], opts["H"],
+                    center=(opts["cx"], opts["cy"]), radius=opts["radius"],
+                    crop_x=opts["crop_x"], crop_y=opts["crop_y"],
+                    style=opts["style"], card_width=opts["card_width"])
             except Exception as e:
                 self._json({"error": str(e)})
                 return
@@ -3072,21 +3181,17 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.isfile(photo):
                 self._json({"error": "请先选择原图"})
                 return
-            out = os.path.splitext(photo)[0] + "-圆环箭头.mov"
+            try:
+                opts = ring_options(d)
+            except (ValueError, TypeError, OverflowError) as e:
+                self._json({"error": str(e)}); return
+            suffix = "照片卡片加号" if opts["style"] == "photo_card" else "圆环箭头"
+            out = os.path.splitext(photo)[0] + "-" + suffix + ".mov"
             base, ext = os.path.splitext(out)
             i = 2
             while os.path.exists(out):
                 out = f"{base}-{i}{ext}"; i += 1
-            try:
-                opts = dict(photo=photo, out=out,
-                            W=int(d.get("W") or 1080), H=int(d.get("H") or 1920),
-                            cx=float(d.get("cx") or .214), cy=float(d.get("cy") or .78),
-                            radius=float(d.get("radius") or .161),
-                            crop_x=float(d.get("crop_x") or .5),
-                            crop_y=float(d.get("crop_y") or .4),
-                            dur=float(d.get("dur") or 8), pop=bool(d.get("pop")))
-            except ValueError:
-                self._json({"error": "参数必须是数字"}); return
+            opts.update(photo=photo, out=out)
             with LOCK:
                 if STATE["busy"]:
                     self._json({"error": "正在渲染中"}); return
@@ -3105,7 +3210,16 @@ class Handler(BaseHTTPRequestHandler):
             if result and not os.path.isfile(result):
                 self._json({"error": f"结果图不存在: {result}"})
                 return
+            upload_mode = d.get("upload_mode", "single")
+            photo2 = (d.get("photo2") or "").strip()
+            if upload_mode not in ("single", "sequence", "together", "replace"):
+                self._json({"error": "未知双图效果"})
+                return
+            if upload_mode != "single" and not os.path.isfile(photo2):
+                self._json({"error": "请先选择第二张照片"})
+                return
             dopts = {
+                "upload_mode": upload_mode, "photo2": photo2,
                 "motion": "drag" if d.get("motion") == "drag" else "slide",
                 "transparent": bool(d.get("transparent")),
                 "cursor": None if d.get("cursor") is None else bool(d.get("cursor")),
@@ -3116,7 +3230,7 @@ class Handler(BaseHTTPRequestHandler):
                                   else "plain"),
                 "caption_font_key": (d.get("caption_font")
                                      if d.get("caption_font") in dragdemo.FONT_KEYS
-                                     else "system"),
+                                     else dragdemo.DEFAULT_CAPTION_FONT),
                 "caption_y": _clamp_float(d.get("caption_y"), 18.5, 4, 80) / 100.0,
                 "duration": _clamp_float(d.get("duration"), 1.9, 0.6, 15.0),
             }
@@ -3142,7 +3256,7 @@ class Handler(BaseHTTPRequestHandler):
                            "demo_caption_y": str(d.get("caption_y", "18.5")),
                            "demo_font": dopts["caption_font_key"],
                            "demo_duration": str(d.get("duration", "1.9")),
-                           "demo_motion": dopts["motion"]})
+                           "demo_motion": dopts["motion"], "demo_upload_mode": upload_mode})
             threading.Thread(target=worker_demo,
                              args=(photo, result, caption,
                                    out, dopts),
@@ -3263,9 +3377,13 @@ class Handler(BaseHTTPRequestHandler):
                     comment_text=(d.get("comment_text") or "").strip(),
                     progress_text=(d.get("progress_text") or "Removing filter").strip(),
                     audio=audio,
+                    ending_path=adending.bundled_ending() if d.get("pair_ending") in (True, "1") else None,
                 )
             except ValueError:
                 self._json({"error": "参数必须是数字"})
+                return
+            if opts["ending_path"] and not os.path.isfile(opts["ending_path"]):
+                self._json({"error": "内置广告结尾素材缺失，请重新安装 CutKit"})
                 return
             # 不覆盖旧成片：自动加 -2、-3 后缀
             base, ext = os.path.splitext(opts["out"])
@@ -3280,7 +3398,7 @@ class Handler(BaseHTTPRequestHandler):
                 render.clear_cancel()
                 STATE.update(busy=True, done=False, ok=False, cancelled=False, out=None,
                              kind="render", prog_done=0, prog_total=0, lines=[])
-            save_settings({k: str(d.get(k, "")) for k in SETTING_KEYS})
+            save_settings({k: str(d[k]) for k in SETTING_KEYS if k in d})
             threading.Thread(target=worker, args=(pairs, opts), daemon=True).start()
             self._json({"ok": True})
         elif self.path == "/run_ad":

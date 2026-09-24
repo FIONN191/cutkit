@@ -60,9 +60,52 @@ def _draw_arrow(d, cx, cy, R, color=(255, 255, 255, 255)):
                (p2[0] - nx * HW, p2[1] - ny * HW)], fill=color)
 
 
+def build_photo_card(photo_path, W=1080, H=1920, center=(.166, .745),
+                     width=.245, crop_x=.5, crop_y=.4, log=None):
+    """Reference-style 3:4 photo card with a white rim and an overlapping + badge."""
+    # Draw only the sticker at 4x resolution, then place it on the transparent canvas.
+    bw = max(16, round(width * W * SS))
+    bh = round(bw * 4 / 3)
+    pad = round(bw * .09)
+    size = (bw + pad * 2, bh + pad * 2)
+    card = Image.new("RGBA", size)
+    border = max(2, round(bw * .028))
+    corner = round(bw * .06)
+    box = (pad, pad, pad + bw - 1, pad + bh - 1)
+    ImageDraw.Draw(card).rounded_rectangle(box, radius=corner, fill="white")
+    iw, ih = bw - border * 2, bh - border * 2
+    with Image.open(photo_path) as original:
+        photo = ImageOps.fit(ImageOps.exif_transpose(original).convert("RGB"),
+                            (iw, ih), Image.LANCZOS, centering=(crop_x, crop_y))
+    mask = Image.new("L", (iw, ih))
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, iw-1, ih-1),
+                                          radius=max(1, corner-border), fill=255)
+    photo.putalpha(mask)
+    card.alpha_composite(photo, (pad + border, pad + border))
+    d = ImageDraw.Draw(card)
+    r = bw * .20
+    x, y = pad + bw * .84, pad + bh - bw * .14
+    d.ellipse((x-r, y-r, x+r, y+r), fill="white")
+    arm, stroke = r * .63, r * .27
+    for rect in ((x-arm, y-stroke/2, x+arm, y+stroke/2),
+                 (x-stroke/2, y-arm, x+stroke/2, y+arm)):
+        d.rounded_rectangle(rect, radius=stroke/2, fill=(62, 62, 62, 255))
+    sticker = card.resize((round(size[0]/SS), round(size[1]/SS)), Image.LANCZOS)
+    out = Image.new("RGBA", (W, H))
+    out.alpha_composite(sticker, (round(center[0]*W-width*W/2-pad/SS),
+                                 round(center[1]*H-bh/SS/2-pad/SS)))
+    if log:
+        log(f"照片卡片＋: 中心({center[0]*W:.0f},{center[1]*H:.0f}) 宽 {width*W:.0f}px")
+    return out
+
+
 def build_badge(photo_path, W=1080, H=1920, center=CENTER, radius=RADIUS,
-                crop_x=0.50, crop_y=0.40, log=None):
+                crop_x=0.50, crop_y=0.40, log=None, style="ring", card_width=.245):
     """返回整幅画布大小的 RGBA 角标（透明底）。"""
+    if style == "photo_card":
+        return build_photo_card(photo_path, W, H, center, card_width, crop_x, crop_y, log)
+    if style != "ring":
+        raise ValueError("未知角标样式")
     log = log or (lambda s: None)
     w, h = W * SS, H * SS
     cx, cy = center[0] * w, center[1] * h
@@ -101,7 +144,7 @@ def build_badge(photo_path, W=1080, H=1920, center=CENTER, radius=RADIUS,
     return out.resize((W, H), Image.LANCZOS)
 
 
-def render_mov(badge, out_path, dur=8.0, fps=30, pop=False, log=None):
+def render_mov(badge, out_path, dur=8.0, fps=30, pop=False, log=None, center=CENTER):
     """把角标写成带 alpha 的 ProRes 4444 MOV（pop=True 时头 0.45s 弹入）。"""
     log = log or (lambda s: None)
     W, H = badge.size
@@ -129,7 +172,7 @@ def render_mov(badge, out_path, dur=8.0, fps=30, pop=False, log=None):
                     sw, sh = max(2, int(W * s)), max(2, int(H * s))
                     sc = badge.resize((sw, sh), Image.LANCZOS)
                     # 以角标圆心为锚点缩放
-                    ax, ay = CENTER[0] * W, CENTER[1] * H
+                    ax, ay = center[0] * W, center[1] * H
                     fr.alpha_composite(sc, (int(ax - ax * s), int(ay - ay * s)))
                     a = fr.split()[3].point(lambda v: int(v * e))
                     fr.putalpha(a)
@@ -146,6 +189,7 @@ def render_mov(badge, out_path, dur=8.0, fps=30, pop=False, log=None):
     except Exception:
         broken = True
     err = proc.stderr.read()
+    proc.stderr.close()
     proc.wait()
     if proc.returncode != 0 or broken:
         bail_if_cancelled(proc, out_path)
@@ -162,23 +206,30 @@ def main(argv):
     ap.add_argument("--size", default="1080x1920", help="画布尺寸，默认 1080x1920")
     ap.add_argument("--dur", type=float, default=8.0, help="时长秒，默认 8")
     ap.add_argument("--fps", type=int, default=30)
-    ap.add_argument("--x", type=float, default=CENTER[0], help="圆心横向位置 0-1")
-    ap.add_argument("--y", type=float, default=CENTER[1], help="圆心纵向位置 0-1")
+    ap.add_argument("--x", type=float, default=None, help="角标中心横向位置 0-1")
+    ap.add_argument("--y", type=float, default=None, help="角标中心纵向位置 0-1")
     ap.add_argument("--radius", type=float, default=RADIUS, help="外半径占宽比例")
     ap.add_argument("--crop-x", type=float, default=0.50, help="方形裁切横向重心 0-1")
     ap.add_argument("--crop-y", type=float, default=0.40, help="方形裁切纵向重心 0-1")
     ap.add_argument("--pop", action="store_true", help="开头 0.45s 弹入动画")
+    ap.add_argument("--style", choices=("ring", "photo_card"), default="ring")
+    ap.add_argument("--card-width", type=float, default=.245, help="照片卡片宽度占画布宽的比例")
     args = ap.parse_args(argv)
 
+    default_center = (.166, .745) if args.style == "photo_card" else CENTER
+    args.x = default_center[0] if args.x is None else args.x
+    args.y = default_center[1] if args.y is None else args.y
     W, H = (int(v) for v in args.size.lower().split("x"))
-    out = args.out or os.path.splitext(args.photo)[0] + "-圆环箭头.mov"
+    suffix = "照片卡片加号" if args.style == "photo_card" else "圆环箭头"
+    out = args.out or os.path.splitext(args.photo)[0] + "-" + suffix + ".mov"
     badge = build_badge(args.photo, W, H, center=(args.x, args.y),
                         radius=args.radius, crop_x=args.crop_x,
-                        crop_y=args.crop_y, log=print)
+                        crop_y=args.crop_y, log=print, style=args.style, card_width=args.card_width)
     png = os.path.splitext(out)[0] + ".png"
     badge.save(png)
     print("PNG", png)
-    render_mov(badge, out, dur=args.dur, fps=args.fps, pop=args.pop, log=print)
+    render_mov(badge, out, dur=args.dur, fps=args.fps, pop=args.pop, log=print,
+               center=(args.x, args.y))
     print("OK", out)
     return 0
 

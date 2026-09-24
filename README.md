@@ -1,11 +1,25 @@
 # CutKit
 
-**Video ops toolbox for short-form content** — six tools in one app: before/after slider videos, screen-recording step edits, drag-photo demos, ring+arrow badges, Fotor screen-recording auto-edit, and a render history.
+**Video ops toolbox for short-form content** — seven tools in one app: before/after slider videos, screen-recording step edits, drag-photo demos, ring+arrow badges, Fotor screen-recording auto-edit, ad assembly, and a render history.
 
-**短视频运营工具箱** —— 六个工具合一：前后对比滑杆视频、录屏步骤剪辑、拖照片演示、圆环箭头角标、Fotor 录屏自动剪辑、生成历史。由 PairCut 与 RosieCut 合并而来，两边功能与选项全部保留。
+**短视频运营工具箱** —— 七个工具合一：前后对比滑杆视频、录屏步骤剪辑、拖照片演示、圆环箭头角标、Fotor 录屏自动剪辑、广告成片、生成历史。由 PairCut 与 RosieCut 合并而来，两边功能与选项全部保留。
 
-[![Download for macOS](https://img.shields.io/badge/macOS-Download_DMG-1d1d1f?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/FIONN191/cutkit/releases/latest/download/CutKit-mac.dmg)
-[![Download for Windows](https://img.shields.io/badge/Windows-Download_EXE-0078D6?style=for-the-badge&logoColor=white)](https://github.com/FIONN191/cutkit/releases/latest/download/CutKit-win-x64.exe)
+[![Download for macOS](https://img.shields.io/badge/macOS_Apple_Silicon-v3.5.0_DMG-1d1d1f?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/FIONN191/cutkit/releases/latest/download/CutKit-mac.dmg)
+[![Download for Windows](https://img.shields.io/badge/Windows_x64-v3.5.0_EXE-0078D6?style=for-the-badge&logoColor=white)](https://github.com/FIONN191/cutkit/releases/latest/download/CutKit-win-x64.exe)
+
+**Latest release / 最新版本：[v3.5.0](https://github.com/FIONN191/cutkit/releases/tag/v3.5.0)**
+
+- **照片卡片＋**：在「圆环箭头」页切换为白色圆角照片卡片，右下角带加号；可调裁切、宽度、位置和时长，输出透明 ProRes 4444 MOV 与 PNG。
+- **广告结尾**：前后对比可选定格最后一帧，并叠加内置 Fotor 透明结尾及原声，增加约 2.87 秒。
+- **拖照片演示**：默认使用 Sukhumvit Set Semi Bold（macOS；其他平台使用无衬线后备字体）；标题预览与导出共用布局。支持单图及三种双图模式。
+- **无杆对比**：支持匀速揭示 After，随后停留，无分界线或手柄。
+- **界面**：显示版本号；默认快捷入口为 Fotor 视频模板、Fotor 视频生成、Magic Sync、Fotor 图片生成、Pinterest、创意营销内容模板、AI创意库。
+- **修复**：短 BGM 不再截断比较视频；生成比较视频时保留其他模式的设置。
+
+Optional frozen-frame ad ending with alpha and audio; matching drag-demo title preview/export;
+dual-photo layouts; clean linear reveal; visible app version and updated shortcut defaults.
+The buttons above always download the latest release. The macOS build is for Apple Silicon;
+the Windows build is a portable x64 executable.
 
 ![](iconsrc.png)
 
@@ -63,7 +77,7 @@ Mode 1's top caption defaults to the TikTok-safe top band (y≈270 on 1080×1920
 /Applications/CutKit.app/Contents/MacOS/CutKit --cli <folder> \
     [-o out.mp4] [--caption "..."] [--scene-sec 3.6] \
     [--transition spin|none] \
-    [--reveal sweep|once|reverse|wipe|flicker|progress|comment|grid] \
+    [--reveal linger|sweep|once|clean|reverse|wipe|flicker|progress|comment|grid] \
     [--direction rtl|ltr] \
     [--comment-user "@lena"] [--comment-text "can u remove the matcha filter"] \
     [--progress-text "Removing filter"] \
@@ -108,8 +122,22 @@ pyinstaller --noconfirm CutKit.spec   # → dist/CutKit.app
 
 ## Test / 测试
 
+**无杆·匀速滑动 / Clean · linear reveal**：在「前后对比 → 对比展示方式」中选择。
+两张图保持原位，仅移动裁切边界，没有白线或圆形手柄。每段前 72% 匀速揭示
+After，后 28% 停留在完整 After；支持两个方向、人物对齐及参数预设。
+复刻 9 月 10 日参考视频：从左往右、每段 11.2 秒，顶部字幕和 Before/After
+标签留空。广告成片也可选择此模式。CLI 使用 `--reveal clean --direction ltr`。
+Images stay fixed, reveal After at constant speed over 72% of the scene, then hold
+for 28%. No divider or handle. Existing slider styles retain their behaviour.
+
 ```
 python3 tests/test_busy.py
+python3 tests/test_clean_reveal.py
+python3 tests/test_ad_ending.py
+python3 tests/test_caption_preview.py
+python3 tests/test_dual_demo.py
+python3 tests/test_demo_title_audio.py
+python3 tests/test_assets.py
 ```
 
 Guards the `busy` state machine — a background thread dying before its own
@@ -128,6 +156,7 @@ restarted. Run it after touching `gui.py`.
 | `align.py` | before/after subject alignment / 前后图人物对齐 |
 | `history.py` | render history + JianYing material folder / 生成历史 + 剪映素材夹 |
 | `dragdemo.py` | drag-photo demo (2 motions, MP4 + transparent MOV) / 拖照片演示（两种动画、MP4 与透明 MOV） |
+| `adending.py` | frozen-frame ad-ending compositor / 最后一帧定格及透明广告结尾合成 |
 | `assets/` | bundled material: Fotor transition, pre-comp loading animation (alpha), Fotor watermark / 内置素材：Fotor 转场、预合成动画（带 alpha）、fotor 水印 |
 | `ringarrow.py` | ring+arrow badge → transparent MOV / 圆环箭头角标 → 透明底 MOV |
 | `gui.py` | native window GUI (pywebview + local HTTP) / 原生窗口界面 |
